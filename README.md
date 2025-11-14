@@ -78,7 +78,32 @@ python3 examples/battle_system_example.py
 
 # Core models examples
 python3 examples/core_models_example.py
+
+# Spatial battle examples
+python3 examples/spatial_battle_example.py
 ```
+
+### Pygame Rendering Demo
+
+Watch battles in real-time with full visual rendering:
+
+```bash
+# Run the Pygame visualization demo
+python3 examples/pygame_rendering_demo.py
+```
+
+**Features:**
+- Real-time 2D arena visualization
+- Creature movement and combat animations
+- HP/energy bars and status indicators
+- Event log showing battle actions
+- Interactive controls (SPACE to pause, ESC to exit)
+
+**Controls:**
+- `SPACE` - Pause/Resume battle
+- `ESC` - Exit
+
+The rendering system uses an event-driven architecture that subscribes to battle events and creates corresponding visual effects. All rendering components are modular and can be customized or extended.
 
 ### Running Tests
 
@@ -92,7 +117,21 @@ python3 -m unittest tests.test_status_effect -v
 python3 -m unittest tests.test_creature -v
 ```
 
+## Rendering & Visualization ✓
+Real-time Pygame-based visualization system featuring:
+- 2D spatial arena with team-colored zones and grid
+- Creature rendering with HP/energy bars and status indicators
+- Interactive UI with team panels and battle feed
+- Event-driven animations (damage numbers, effects)
+- Pause/resume and input handling
+- Battle state visualization and winner display
+
+See the [Pygame Rendering Demo](#pygame-rendering-demo) below for a live visualization example.
+
+![EvoBattle Rendering Screenshot](https://github.com/user-attachments/assets/e876d6cc-186d-4e7c-bdf3-6d89972b03e8)
+
 ## Setup Instructions
 1. Clone the repository: `git clone https://github.com/dbmelville2-jpg/evobattle`
 2. Navigate into the project directory: `cd evobattle`
 3. Install dependencies: `pip install -r requirements.txt`
+   - Includes: Flask, Python-dotenv, Pygame

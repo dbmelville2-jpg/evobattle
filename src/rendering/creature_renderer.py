@@ -105,7 +105,7 @@ class CreatureRenderer:
         self._draw_hp_bar(screen, creature, screen_pos)
         
         # Draw energy bar (if applicable)
-        if hasattr(creature.creature, 'energy') and creature.creature.energy < creature.creature.stats.max_energy:
+        if hasattr(creature.creature, 'energy') and creature.creature.energy < creature.creature.max_energy:
             self._draw_energy_bar(screen, creature, screen_pos)
         
         # Draw creature name below
@@ -185,7 +185,7 @@ class CreatureRenderer:
         pygame.draw.rect(screen, (40, 40, 60), bg_rect)
         
         # Energy fill
-        energy_percent = creature.creature.energy / creature.creature.stats.max_energy
+        energy_percent = creature.creature.energy / creature.creature.max_energy
         fill_width = int(bar_width * energy_percent)
         
         if fill_width > 0:
