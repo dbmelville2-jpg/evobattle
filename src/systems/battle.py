@@ -71,13 +71,13 @@ class BattleCreature:
     Wrapper for Creature with spatial properties and behavior.
     
     Combines creature stats/abilities with 2D positioning and AI behavior.
+    Each creature acts as an individual with their own targeting and behavior.
     """
     
     def __init__(
         self,
         creature: Creature,
-        position: Vector2D,
-        team: str = "player"
+        position: Vector2D
     ):
         self.creature = creature
         self.spatial = SpatialEntity(
@@ -85,7 +85,6 @@ class BattleCreature:
             radius=1.0,
             max_speed=creature.stats.speed / 10.0  # Convert speed stat to spatial speed
         )
-        self.team = team
         self.behavior = self._determine_behavior()
         self.target: Optional['BattleCreature'] = None
         self.ability_cooldowns: Dict[str, float] = {}
@@ -153,18 +152,16 @@ class SpatialBattle:
     
     def __init__(
         self,
-        player_team: List[Creature],
-        enemy_team: List[Creature],
+        creatures: List[Creature],
         arena_width: float = 100.0,
         arena_height: float = 100.0,
         random_seed: Optional[int] = None
     ):
         """
-        Initialize a new spatial battle.
+        Initialize a new spatial battle with individual creatures.
         
         Args:
-            player_team: List of creatures on player's team
-            enemy_team: List of creatures on enemy's team
+            creatures: List of all creatures in the battle
             arena_width: Width of the battle arena
             arena_height: Height of the battle arena
             random_seed: Optional seed for reproducible randomness
@@ -179,28 +176,33 @@ class SpatialBattle:
         if random_seed is not None:
             random.seed(random_seed)
         
-        # Spawn creatures
-        self.player_creatures = self._spawn_team(player_team, "player", is_left_side=True)
-        self.enemy_creatures = self._spawn_team(enemy_team, "enemy", is_left_side=False)
-        
-        self._log(f"Battle started: {len(player_team)} vs {len(enemy_team)} in {arena_width}x{arena_height} arena")
+        # Spawn all creatures
+        self.creatures = self._spawn_creatures(creatures)
+        self._log(f"Battle started: {len(creatures)} creatures in {arena_width}x{arena_height} arena")
     
-    def _spawn_team(
+    def _spawn_creatures(
         self,
-        creatures: List[Creature],
-        team: str,
-        is_left_side: bool
+        creatures: List[Creature]
     ) -> List[BattleCreature]:
-        """Spawn a team of creatures in the arena."""
+        """Spawn creatures distributed across the arena."""
         spawned = []
-        spawn_x = self.arena.width * 0.2 if is_left_side else self.arena.width * 0.8
         
         for i, creature in enumerate(creatures):
-            # Distribute vertically
-            spawn_y = (i + 1) * self.arena.height / (len(creatures) + 1)
-            position = Vector2D(spawn_x, spawn_y)
+            # Distribute creatures in a grid pattern
+            if len(creatures) == 1:
+                spawn_x = self.arena.width / 2
+                spawn_y = self.arena.height / 2
+            else:
+                # Grid distribution
+                cols = int((len(creatures) ** 0.5) + 0.5)
+                rows = (len(creatures) + cols - 1) // cols
+                row = i // cols
+                col = i % cols
+                spawn_x = (col + 1) * self.arena.width / (cols + 1)
+                spawn_y = (row + 1) * self.arena.height / (rows + 1)
             
-            battle_creature = BattleCreature(creature, position, team)
+            position = Vector2D(spawn_x, spawn_y)
+            battle_creature = BattleCreature(creature, position)
             spawned.append(battle_creature)
             
             self._emit_event(BattleEvent(
@@ -241,14 +243,23 @@ class SpatialBattle:
         
         self.current_time += delta_time
         
-        # Update all creatures
-        all_creatures = self.player_creatures + self.enemy_creatures
-        alive_players = [c for c in self.player_creatures if c.is_alive()]
-        alive_enemies = [c for c in self.enemy_creatures if c.is_alive()]
+        # Get all alive creatures
+        alive_creatures = [c for c in self.creatures if c.is_alive()]
         
-        # Check victory condition
-        if not alive_players or not alive_enemies:
+        # Check if battle should end (only one or zero creatures left)
+        if len(alive_creatures) <= 1:
             self._end_battle()
+            return
+        
+        # Update each alive creature
+        for creature in alive_creatures:
+            # Get other alive creatures as potential targets
+            others = [c for c in alive_creatures if c != creature]
+            self._update_creature(creature, others, delta_time)
+        
+        # Process status effects
+        for creature in alive_creatures:
+            self._process_status_effects(creature)
             return
         
         # Update each creature
@@ -262,45 +273,39 @@ class SpatialBattle:
     def _update_creature(
         self,
         creature: BattleCreature,
-        allies: List[BattleCreature],
-        enemies: List[BattleCreature],
+        others: List[BattleCreature],
         delta_time: float
     ):
         """Update a single creature's AI, movement, and combat."""
-        # Get allies and enemies for this creature
-        if creature.team == "player":
-            my_allies = [c for c in allies if c != creature]
-            my_enemies = enemies
-        else:
-            my_allies = [c for c in enemies if c != creature]
-            my_enemies = allies
+        # In individual mode, all other creatures are potential targets
+        # The behavior system will determine targeting based on traits
         
         # Convert to spatial entities for behavior system
-        ally_entities = [c.spatial for c in my_allies]
-        enemy_entities = [c.spatial for c in my_enemies]
+        other_entities = [c.spatial for c in others]
         
-        # Determine target
+        # Determine target using behavior
+        # For individual battles, treat all others as potential enemies
         if not creature.target or not creature.target.is_alive():
             target_entity = creature.behavior.get_target(
                 creature.spatial,
-                ally_entities,
-                enemy_entities,
+                [],  # No allies in individual mode
+                other_entities,  # All others are potential targets
                 self.arena.hazards,
                 self.arena.resources
             )
             # Find corresponding BattleCreature
             if target_entity:
-                for enemy in my_enemies:
-                    if enemy.spatial == target_entity:
-                        creature.target = enemy
+                for other in others:
+                    if other.spatial == target_entity:
+                        creature.target = other
                         break
         
         # Determine movement
         movement_target = creature.behavior.get_movement_target(
             creature.spatial,
             creature.target.spatial if creature.target else None,
-            ally_entities,
-            enemy_entities,
+            [],  # No allies
+            other_entities,  # All others
             self.arena.hazards,
             self.arena.resources
         )
@@ -325,6 +330,7 @@ class SpatialBattle:
         
         # Attempt combat
         if creature.target and creature.can_attack(self.current_time):
+            self._attempt_attack(creature, creature.target)
             self._attempt_attack(creature, creature.target)
     
     def _attempt_attack(self, attacker: BattleCreature, defender: BattleCreature):
@@ -500,27 +506,28 @@ class SpatialBattle:
         creature.creature.tick_modifiers()
     
     def _end_battle(self):
-        """End the battle and determine winner."""
+        """End the battle and determine winner/survivors."""
         self.is_over = True
         
-        alive_players = [c for c in self.player_creatures if c.is_alive()]
-        alive_enemies = [c for c in self.enemy_creatures if c.is_alive()]
+        alive_creatures = [c for c in self.creatures if c.is_alive()]
         
-        if alive_players:
-            winner_team = "player"
-            winners = alive_players
+        if alive_creatures:
+            winner_name = alive_creatures[0].creature.name if len(alive_creatures) == 1 else "Multiple survivors"
+            self._log(f"\n=== Battle End - {len(alive_creatures)} survivor(s) ===")
+            self._emit_event(BattleEvent(
+                event_type=BattleEventType.BATTLE_END,
+                message=f"Battle ended - {len(alive_creatures)} survivor(s)!",
+                data={'survivors': len(alive_creatures), 'winner': winner_name}
+            ))
         else:
-            winner_team = "enemy"
-            winners = alive_enemies
-        
-        self._log(f"\n=== Battle End - Winner: {winner_team} ===")
-        self._emit_event(BattleEvent(
-            event_type=BattleEventType.BATTLE_END,
-            message=f"Battle ended - {winner_team} wins!",
-            data={'winner': winner_team, 'survivors': len(winners)}
-        ))
+            self._log(f"\n=== Battle End - No survivors ===")
+            self._emit_event(BattleEvent(
+                event_type=BattleEventType.BATTLE_END,
+                message="Battle ended - No survivors!",
+                data={'survivors': 0}
+            ))
     
-    def simulate(self, duration: float = 60.0, time_step: float = 0.1) -> str:
+    def simulate(self, duration: float = 60.0, time_step: float = 0.1) -> Optional[Creature]:
         """
         Simulate the entire battle for a duration or until it ends.
         
@@ -529,7 +536,7 @@ class SpatialBattle:
             time_step: Time between updates (smaller = more accurate)
             
         Returns:
-            Winning team ('player' or 'enemy')
+            The winning creature, or None if no winner (draw/timeout)
         """
         self._emit_event(BattleEvent(
             event_type=BattleEventType.BATTLE_START,
@@ -544,43 +551,46 @@ class SpatialBattle:
         
         if not self.is_over:
             # Timeout - determine winner by HP
-            player_hp = sum(c.creature.stats.hp for c in self.player_creatures)
-            enemy_hp = sum(c.creature.stats.hp for c in self.enemy_creatures)
-            return "player" if player_hp > enemy_hp else "enemy"
+            alive = [c for c in self.creatures if c.is_alive()]
+            if alive:
+                winner = max(alive, key=lambda c: c.creature.stats.hp)
+                return winner.creature
+            return None
         
-        alive_players = [c for c in self.player_creatures if c.is_alive()]
-        return "player" if alive_players else "enemy"
+        alive_creatures = [c for c in self.creatures if c.is_alive()]
+        return alive_creatures[0].creature if len(alive_creatures) == 1 else None
     
     def get_battle_log(self) -> List[str]:
         """Get the complete battle log."""
         return self.battle_log
+    
+    def get_all_creatures(self) -> List['BattleCreature']:
+        """
+        Get all creatures in the battle.
+        
+        Returns:
+            List of all BattleCreatures
+        """
+        return self.creatures
     
     def get_state_snapshot(self) -> Dict:
         """Get current state snapshot for visualization."""
         return {
             'time': self.current_time,
             'is_over': self.is_over,
-            'players': [
+            'creatures': [
                 {
                     'name': c.creature.name,
+                    'id': c.creature.creature_id,
                     'hp': c.creature.stats.hp,
                     'max_hp': c.creature.stats.max_hp,
+                    'hunger': c.creature.hunger,
                     'position': c.spatial.position.to_tuple(),
                     'velocity': c.spatial.velocity.to_tuple(),
-                    'alive': c.is_alive()
+                    'alive': c.is_alive(),
+                    'color': c.creature.get_display_color()
                 }
-                for c in self.player_creatures
-            ],
-            'enemies': [
-                {
-                    'name': c.creature.name,
-                    'hp': c.creature.stats.hp,
-                    'max_hp': c.creature.stats.max_hp,
-                    'position': c.spatial.position.to_tuple(),
-                    'velocity': c.spatial.velocity.to_tuple(),
-                    'alive': c.is_alive()
-                }
-                for c in self.enemy_creatures
+                for c in self.creatures
             ]
         }
 

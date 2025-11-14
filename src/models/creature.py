@@ -4,6 +4,9 @@ Creature model - Enhanced creature system with stats, abilities, and evolution.
 
 from typing import Dict, List, Optional
 import uuid
+import time
+import colorsys
+import random
 from .stats import Stats, StatModifier, StatGrowth
 from .ability import Ability
 from .trait import Trait
@@ -102,6 +105,11 @@ class Creature:
         max_energy (int): Maximum energy
         hunger (int): Current hunger level (0=starving, 100=full)
         max_hunger (int): Maximum hunger level
+        birth_time (float): Simulation time when creature was born
+        age (float): Current age in simulation time units
+        mature (bool): Whether creature has reached maturity
+        parent_ids (List[str]): IDs of parent creatures
+        hue (float): Base hue for HSV color system (0-360)
     """
     
     def __init__(
@@ -117,7 +125,12 @@ class Creature:
         energy: int = 100,
         max_energy: int = 100,
         hunger: int = 100,
-        max_hunger: int = 100
+        max_hunger: int = 100,
+        birth_time: Optional[float] = None,
+        age: float = 0.0,
+        mature: bool = False,
+        parent_ids: Optional[List[str]] = None,
+        hue: Optional[float] = None
     ):
         """
         Initialize a new Creature.
@@ -135,12 +148,24 @@ class Creature:
             max_energy: Maximum energy
             hunger: Starting hunger (0=starving, 100=full)
             max_hunger: Maximum hunger
+            birth_time: When creature was born (current time if None)
+            age: Current age in simulation time
+            mature: Whether creature is mature enough to breed
+            parent_ids: List of parent creature IDs
+            hue: Base hue for color (0-360, random if None)
         """
         self.creature_id = creature_id if creature_id else str(uuid.uuid4())
         self.name = name
         self.creature_type = creature_type if creature_type else CreatureType()
         self.level = level
         self.experience = experience
+        
+        # Lifecycle attributes
+        self.birth_time = birth_time if birth_time is not None else time.time()
+        self.age = age
+        self.mature = mature
+        self.parent_ids = parent_ids if parent_ids else []
+        self.hue = hue if hue is not None else random.uniform(0, 360)
         
         # Initialize stats based on type and level
         if base_stats:
@@ -338,6 +363,54 @@ class Creature:
         """Check if creature is still alive (HP > 0 and not starved)."""
         return self.stats.is_alive() and self.hunger > 0
     
+    def can_breed(self) -> bool:
+        """
+        Check if creature is eligible for breeding.
+        
+        Returns:
+            True if creature is mature, alive, and in good condition
+        """
+        return (
+            self.mature and 
+            self.is_alive() and 
+            self.stats.hp > 0.5 * self.stats.max_hp and 
+            self.hunger > 80
+        )
+    
+    def tick_age(self, delta_time: float):
+        """
+        Update creature age and check for maturity.
+        
+        Args:
+            delta_time: Time elapsed since last tick (seconds)
+        """
+        self.age += delta_time
+        
+        # Check for maturity (default: 20 seconds of age)
+        if not self.mature and self.age >= 20.0:
+            self.mature = True
+    
+    def get_display_color(self) -> tuple:
+        """
+        Calculate display color using HSV system.
+        
+        Hue is based on lineage (stored in self.hue),
+        Saturation reflects health (HP ratio),
+        Value reflects hunger level.
+        
+        Returns:
+            RGB color tuple (r, g, b) with values 0-255
+        """
+        # Saturation based on HP ratio (0.3 to 1.0 for visibility)
+        saturation = 0.3 + 0.7 * (self.stats.hp / self.stats.max_hp)
+        
+        # Value based on hunger (0.3 to 1.0 for visibility)
+        value = 0.3 + 0.7 * (self.hunger / 100.0)
+        
+        # Convert HSV to RGB
+        rgb = colorsys.hsv_to_rgb(self.hue / 360.0, saturation, value)
+        return tuple(int(255 * x) for x in rgb)
+    
     def rest(self):
         """Restore energy and some HP."""
         self.energy = self.max_energy
@@ -423,7 +496,12 @@ class Creature:
             'energy': self.energy,
             'max_energy': self.max_energy,
             'hunger': self.hunger,
-            'max_hunger': self.max_hunger
+            'max_hunger': self.max_hunger,
+            'birth_time': self.birth_time,
+            'age': self.age,
+            'mature': self.mature,
+            'parent_ids': self.parent_ids,
+            'hue': self.hue
         }
     
     @staticmethod
@@ -456,7 +534,12 @@ class Creature:
             energy=data.get('energy', 100),
             max_energy=data.get('max_energy', 100),
             hunger=data.get('hunger', 100),
-            max_hunger=data.get('max_hunger', 100)
+            max_hunger=data.get('max_hunger', 100),
+            birth_time=data.get('birth_time'),
+            age=data.get('age', 0.0),
+            mature=data.get('mature', False),
+            parent_ids=data.get('parent_ids', []),
+            hue=data.get('hue')
         )
         
         # Restore active modifiers

@@ -15,12 +15,13 @@ class CreatureRenderer:
     """
     Renders creatures in the battle arena.
     
-    Can render creatures as colored circles with team colors,
-    or can be extended to use sprite sheets.
+    Can render creatures as colored circles using HSV colors from the creature
+    (based on lineage, health, and hunger), or fallback to team colors for
+    backward compatibility. Can be extended to use sprite sheets.
     
     Attributes:
-        player_color: Base color for player team
-        enemy_color: Base color for enemy team
+        player_color: Fallback color for player team
+        enemy_color: Fallback color for enemy team
         radius: Base radius for creature rendering
     """
     
@@ -56,9 +57,7 @@ class CreatureRenderer:
             battle: The spatial battle containing creatures
         """
         # Render all creatures
-        all_creatures = battle.player_creatures + battle.enemy_creatures
-        
-        for creature in all_creatures:
+        for creature in battle.creatures:
             if creature.is_alive():
                 self._render_creature(screen, creature, battle)
     
@@ -76,13 +75,10 @@ class CreatureRenderer:
             battle.arena
         )
         
-        # Determine color based on team
-        if creature.team == "player":
-            color = self.player_color
-            outline_color = (120, 160, 255)
-        else:
-            color = self.enemy_color
-            outline_color = (255, 140, 140)
+        # Use HSV color from creature
+        color = creature.creature.get_display_color()
+        # Calculate outline as slightly brighter version
+        outline_color = tuple(min(255, c + 40) for c in color)
         
         # Draw creature body (circle)
         pygame.draw.circle(screen, color, screen_pos, self.radius)

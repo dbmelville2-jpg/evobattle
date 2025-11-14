@@ -126,21 +126,15 @@ class UIComponents:
         team: str,
         is_left: bool
     ):
-        """Render a team status panel."""
+        """Render a creature status panel."""
         panel_width = 220
-        panel_height = 200
+        panel_height = 300
         margin = 10
         
         if is_left:
             panel_x = margin
-            creatures = battle.player_creatures
-            team_color = self.player_team_color
-            team_name = "PLAYER TEAM"
         else:
             panel_x = screen.get_width() - panel_width - margin
-            creatures = battle.enemy_creatures
-            team_color = self.enemy_team_color
-            team_name = "ENEMY TEAM"
         
         panel_y = 90
         
@@ -154,23 +148,27 @@ class UIComponents:
         )
         screen.blit(panel_surface, (panel_x, panel_y))
         
-        # Team name header
-        header_surface = self.text_font.render(team_name, True, team_color)
+        # Header
+        header_text = "CREATURES" if is_left else "STATUS"
+        header_surface = self.text_font.render(header_text, True, self.text_color)
         header_rect = header_surface.get_rect(centerx=panel_width // 2, top=10)
         screen.blit(header_surface, (panel_x + header_rect.x, panel_y + header_rect.y))
         
         # Creature stats
         y_offset = 40
-        alive_count = sum(1 for c in creatures if c.is_alive())
+        alive_count = sum(1 for c in battle.creatures if c.is_alive())
         
         # Alive count
-        alive_text = f"Alive: {alive_count}/{len(creatures)}"
+        alive_text = f"Alive: {alive_count}/{len(battle.creatures)}"
         alive_surface = self.small_font.render(alive_text, True, self.text_color)
         screen.blit(alive_surface, (panel_x + 10, panel_y + y_offset))
         y_offset += 25
         
         # Individual creature stats
-        for creature in creatures:
+        # Determine which creatures to show based on panel side
+        creatures_to_show = battle.creatures[:len(battle.creatures)//2] if is_left else battle.creatures[len(battle.creatures)//2:]
+        
+        for creature in creatures_to_show:
             if y_offset > panel_height - 30:
                 break  # Panel full
             
@@ -262,10 +260,18 @@ class UIComponents:
     
     def _render_battle_end(self, screen: pygame.Surface, battle: SpatialBattle):
         """Render battle end overlay."""
-        # Determine winner
-        alive_players = [c for c in battle.player_creatures if c.is_alive()]
-        winner = "PLAYER WINS!" if alive_players else "ENEMY WINS!"
-        winner_color = self.player_team_color if alive_players else self.enemy_team_color
+        # Determine survivors
+        alive_creatures = [c for c in battle.creatures if c.is_alive()]
+        
+        if len(alive_creatures) == 1:
+            winner_text = f"{alive_creatures[0].creature.name} WINS!"
+            winner_color = alive_creatures[0].creature.get_display_color()
+        elif len(alive_creatures) > 1:
+            winner_text = f"{len(alive_creatures)} SURVIVORS!"
+            winner_color = (100, 255, 100)
+        else:
+            winner_text = "NO SURVIVORS"
+            winner_color = (200, 200, 200)
         
         # Semi-transparent overlay
         overlay = pygame.Surface((screen.get_width(), screen.get_height()), pygame.SRCALPHA)
@@ -273,7 +279,7 @@ class UIComponents:
         screen.blit(overlay, (0, 0))
         
         # Winner text
-        winner_surface = self.title_font.render(winner, True, winner_color)
+        winner_surface = self.title_font.render(winner_text, True, winner_color)
         winner_rect = winner_surface.get_rect(
             center=(screen.get_width() // 2, screen.get_height() // 2)
         )
