@@ -1,0 +1,416 @@
+"""
+Creature model - Enhanced creature system with stats, abilities, and evolution.
+"""
+
+from typing import Dict, List, Optional
+import uuid
+from .stats import Stats, StatModifier, StatGrowth
+from .ability import Ability
+from .trait import Trait
+
+
+class CreatureType:
+    """
+    Defines a creature type/species with base stats and characteristics.
+    
+    Attributes:
+        name (str): Name of the creature type
+        description (str): Description of this creature type
+        base_stats (Stats): Base stats for this type at level 1
+        stat_growth (StatGrowth): How stats grow with levels
+        type_tags (List[str]): Tags like "fire", "water", "flying", etc.
+        evolution_stage (int): Current evolution stage (0=base, 1=first evolution, etc.)
+        can_evolve (bool): Whether this type can evolve further
+    """
+    
+    def __init__(
+        self,
+        name: str = "Basic Creature",
+        description: str = "A basic creature type",
+        base_stats: Optional[Stats] = None,
+        stat_growth: Optional[StatGrowth] = None,
+        type_tags: Optional[List[str]] = None,
+        evolution_stage: int = 0,
+        can_evolve: bool = True
+    ):
+        """
+        Initialize a CreatureType.
+        
+        Args:
+            name: Name of the creature type
+            description: Description
+            base_stats: Base stats at level 1
+            stat_growth: Growth profile
+            type_tags: Type tags for this creature
+            evolution_stage: Current evolution stage
+            can_evolve: Whether further evolution is possible
+        """
+        self.name = name
+        self.description = description
+        self.base_stats = base_stats if base_stats else Stats()
+        self.stat_growth = stat_growth if stat_growth else StatGrowth()
+        self.type_tags = type_tags if type_tags else []
+        self.evolution_stage = evolution_stage
+        self.can_evolve = can_evolve
+    
+    def to_dict(self) -> Dict:
+        """Serialize to dictionary."""
+        return {
+            'name': self.name,
+            'description': self.description,
+            'base_stats': self.base_stats.to_dict(),
+            'stat_growth': self.stat_growth.to_dict(),
+            'type_tags': self.type_tags,
+            'evolution_stage': self.evolution_stage,
+            'can_evolve': self.can_evolve
+        }
+    
+    @staticmethod
+    def from_dict(data: Dict) -> 'CreatureType':
+        """Deserialize from dictionary."""
+        data_copy = data.copy()
+        if 'base_stats' in data_copy:
+            data_copy['base_stats'] = Stats.from_dict(data_copy['base_stats'])
+        if 'stat_growth' in data_copy:
+            data_copy['stat_growth'] = StatGrowth.from_dict(data_copy['stat_growth'])
+        return CreatureType(**data_copy)
+    
+    def __repr__(self):
+        """String representation."""
+        return f"CreatureType(name='{self.name}', stage={self.evolution_stage})"
+
+
+class Creature:
+    """
+    Represents a creature in the EvoBattle game.
+    
+    An enhanced version of Fighter with full stats system, abilities,
+    type information, experience/leveling, and serialization support.
+    
+    Attributes:
+        creature_id (str): Unique identifier
+        name (str): Individual name of this creature
+        creature_type (CreatureType): Type/species of creature
+        level (int): Current level
+        experience (int): Current experience points
+        stats (Stats): Current stats
+        base_stats (Stats): Base stats without modifiers
+        abilities (List[Ability]): Abilities this creature can use
+        traits (List[Trait]): Genetic traits affecting the creature
+        active_modifiers (List[StatModifier]): Active stat modifiers
+        energy (int): Current energy for using abilities
+        max_energy (int): Maximum energy
+    """
+    
+    def __init__(
+        self,
+        name: str = "Creature",
+        creature_type: Optional[CreatureType] = None,
+        level: int = 1,
+        experience: int = 0,
+        creature_id: Optional[str] = None,
+        base_stats: Optional[Stats] = None,
+        abilities: Optional[List[Ability]] = None,
+        traits: Optional[List[Trait]] = None,
+        energy: int = 100,
+        max_energy: int = 100
+    ):
+        """
+        Initialize a new Creature.
+        
+        Args:
+            name: Individual name
+            creature_type: Type/species
+            level: Starting level
+            experience: Starting XP
+            creature_id: Unique ID (auto-generated if None)
+            base_stats: Base stats (from type if None)
+            abilities: List of abilities
+            traits: List of traits
+            energy: Starting energy
+            max_energy: Maximum energy
+        """
+        self.creature_id = creature_id if creature_id else str(uuid.uuid4())
+        self.name = name
+        self.creature_type = creature_type if creature_type else CreatureType()
+        self.level = level
+        self.experience = experience
+        
+        # Initialize stats based on type and level
+        if base_stats:
+            self.base_stats = base_stats
+        else:
+            self.base_stats = self.creature_type.stat_growth.calculate_stats_at_level(
+                self.creature_type.base_stats,
+                self.level
+            )
+        
+        self.stats = self.base_stats.copy()
+        self.abilities = abilities if abilities else []
+        self.traits = traits if traits else []
+        self.active_modifiers: List[StatModifier] = []
+        self.energy = energy
+        self.max_energy = max_energy
+    
+    def get_effective_stats(self) -> Stats:
+        """
+        Calculate effective stats with all modifiers applied.
+        
+        Returns:
+            Stats with all active modifiers applied
+        """
+        effective = self.base_stats.copy()
+        
+        # Apply trait modifiers
+        for trait in self.traits:
+            trait_modifier = StatModifier(
+                name=f"Trait: {trait.name}",
+                duration=-1,
+                attack_multiplier=trait.strength_modifier,
+                defense_multiplier=trait.defense_modifier,
+                speed_multiplier=trait.speed_modifier
+            )
+            effective = effective.apply_modifier(trait_modifier)
+        
+        # Apply active modifiers (buffs/debuffs)
+        for modifier in self.active_modifiers:
+            effective = effective.apply_modifier(modifier)
+        
+        return effective
+    
+    def add_modifier(self, modifier: StatModifier):
+        """
+        Add a stat modifier to the creature.
+        
+        Args:
+            modifier: The modifier to add
+        """
+        self.active_modifiers.append(modifier)
+        self.stats = self.get_effective_stats()
+    
+    def remove_modifier(self, modifier_name: str) -> bool:
+        """
+        Remove a stat modifier by name.
+        
+        Args:
+            modifier_name: Name of the modifier to remove
+            
+        Returns:
+            True if modifier was found and removed
+        """
+        for i, mod in enumerate(self.active_modifiers):
+            if mod.name == modifier_name:
+                self.active_modifiers.pop(i)
+                self.stats = self.get_effective_stats()
+                return True
+        return False
+    
+    def tick_modifiers(self):
+        """Update all modifiers and remove expired ones."""
+        expired = []
+        for modifier in self.active_modifiers:
+            modifier.tick()
+            if modifier.is_expired():
+                expired.append(modifier)
+        
+        for exp_mod in expired:
+            self.active_modifiers.remove(exp_mod)
+        
+        if expired:
+            self.stats = self.get_effective_stats()
+    
+    def add_ability(self, ability: Ability):
+        """Add an ability to this creature."""
+        self.abilities.append(ability)
+    
+    def remove_ability(self, ability_name: str) -> bool:
+        """
+        Remove an ability by name.
+        
+        Args:
+            ability_name: Name of ability to remove
+            
+        Returns:
+            True if ability was found and removed
+        """
+        for i, ability in enumerate(self.abilities):
+            if ability.name == ability_name:
+                self.abilities.pop(i)
+                return True
+        return False
+    
+    def get_ability(self, ability_name: str) -> Optional[Ability]:
+        """
+        Get an ability by name.
+        
+        Args:
+            ability_name: Name of the ability
+            
+        Returns:
+            The ability if found, None otherwise
+        """
+        for ability in self.abilities:
+            if ability.name == ability_name:
+                return ability
+        return None
+    
+    def add_trait(self, trait: Trait):
+        """
+        Add a trait to this creature.
+        
+        Args:
+            trait: The trait to add
+        """
+        self.traits.append(trait)
+        self.stats = self.get_effective_stats()
+    
+    def has_trait(self, trait_name: str) -> bool:
+        """
+        Check if creature has a specific trait.
+        
+        Args:
+            trait_name: Name of the trait
+            
+        Returns:
+            True if creature has the trait
+        """
+        return any(trait.name == trait_name for trait in self.traits)
+    
+    def gain_experience(self, amount: int) -> bool:
+        """
+        Add experience and check for level up.
+        
+        Args:
+            amount: Amount of XP to add
+            
+        Returns:
+            True if leveled up
+        """
+        self.experience += amount
+        exp_needed = self.experience_for_next_level()
+        
+        if self.experience >= exp_needed:
+            return self.level_up()
+        return False
+    
+    def experience_for_next_level(self) -> int:
+        """
+        Calculate experience needed for next level.
+        
+        Returns:
+            XP required to reach next level
+        """
+        # Simple formula: level^2 * 100
+        return (self.level ** 2) * 100
+    
+    def level_up(self) -> bool:
+        """
+        Level up the creature.
+        
+        Returns:
+            True if level up succeeded
+        """
+        self.level += 1
+        self.experience = 0  # Reset XP for new level
+        
+        # Recalculate stats for new level
+        self.base_stats = self.creature_type.stat_growth.calculate_stats_at_level(
+            self.creature_type.base_stats,
+            self.level
+        )
+        self.stats = self.get_effective_stats()
+        
+        # Restore HP and energy on level up
+        self.stats.hp = self.stats.max_hp
+        self.energy = self.max_energy
+        
+        return True
+    
+    def is_alive(self) -> bool:
+        """Check if creature is still alive."""
+        return self.stats.is_alive()
+    
+    def rest(self):
+        """Restore energy and some HP."""
+        self.energy = self.max_energy
+        heal_amount = self.stats.max_hp // 4
+        self.stats.heal(heal_amount)
+        
+        # Reset ability cooldowns
+        for ability in self.abilities:
+            ability.reset_cooldown()
+    
+    def to_dict(self) -> Dict:
+        """
+        Serialize creature to dictionary for persistence.
+        
+        Returns:
+            Dictionary representation
+        """
+        return {
+            'creature_id': self.creature_id,
+            'name': self.name,
+            'creature_type': self.creature_type.to_dict(),
+            'level': self.level,
+            'experience': self.experience,
+            'base_stats': self.base_stats.to_dict(),
+            'abilities': [ability.to_dict() for ability in self.abilities],
+            'traits': [
+                {
+                    'name': trait.name,
+                    'description': trait.description,
+                    'trait_type': trait.trait_type,
+                    'strength_modifier': trait.strength_modifier,
+                    'speed_modifier': trait.speed_modifier,
+                    'defense_modifier': trait.defense_modifier,
+                    'rarity': trait.rarity
+                }
+                for trait in self.traits
+            ],
+            'active_modifiers': [mod.to_dict() for mod in self.active_modifiers],
+            'energy': self.energy,
+            'max_energy': self.max_energy
+        }
+    
+    @staticmethod
+    def from_dict(data: Dict) -> 'Creature':
+        """
+        Deserialize creature from dictionary.
+        
+        Args:
+            data: Dictionary representation
+            
+        Returns:
+            Recreated Creature object
+        """
+        from .ability import Ability
+        
+        creature_type = CreatureType.from_dict(data['creature_type'])
+        base_stats = Stats.from_dict(data['base_stats'])
+        abilities = [Ability.from_dict(a) for a in data.get('abilities', [])]
+        traits = [Trait(**t) for t in data.get('traits', [])]
+        
+        creature = Creature(
+            name=data['name'],
+            creature_type=creature_type,
+            level=data['level'],
+            experience=data['experience'],
+            creature_id=data['creature_id'],
+            base_stats=base_stats,
+            abilities=abilities,
+            traits=traits,
+            energy=data.get('energy', 100),
+            max_energy=data.get('max_energy', 100)
+        )
+        
+        # Restore active modifiers
+        for mod_data in data.get('active_modifiers', []):
+            creature.active_modifiers.append(StatModifier.from_dict(mod_data))
+        
+        creature.stats = creature.get_effective_stats()
+        return creature
+    
+    def __repr__(self):
+        """String representation of Creature."""
+        return (f"Creature(name='{self.name}', type='{self.creature_type.name}', "
+                f"level={self.level}, hp={self.stats.hp}/{self.stats.max_hp})")
