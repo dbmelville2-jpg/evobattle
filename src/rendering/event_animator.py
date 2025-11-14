@@ -103,6 +103,17 @@ class EventAnimator:
         """
         self.pending_events.append(event)
     
+    def on_battle_event(self, event: BattleEvent):
+        """
+        Callback method for battle events (alias for add_battle_event).
+        
+        This method can be used directly as a callback for battle.add_event_callback().
+        
+        Args:
+            event: The battle event to animate
+        """
+        self.add_battle_event(event)
+    
     def process_events(self, screen: pygame.Surface, battle):
         """
         Process pending events and create effects.
@@ -246,15 +257,21 @@ class EventAnimator:
         # Remove expired effects
         self.effects = [e for e in self.effects if not e.is_expired()]
     
-    def render(self, screen: pygame.Surface):
+    def render(self, screen: pygame.Surface, battle=None):
         """
         Render all active effects.
         
         Args:
             screen: Pygame surface to draw on
+            battle: Optional battle instance (for consistency with other renderers)
         """
         for effect in self.effects:
             effect.render(screen)
+    
+    def clear(self):
+        """Clear all effects and pending events."""
+        self.effects.clear()
+        self.pending_events.clear()
     
     def _world_to_screen(
         self,
