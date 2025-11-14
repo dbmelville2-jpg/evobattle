@@ -97,6 +97,10 @@ class BattleCreature:
         # Check traits for behavior hints
         trait_names = [t.name.lower() for t in self.creature.traits]
         
+        # Check for foraging/food-seeking traits first
+        if any(word in ' '.join(trait_names) for word in ['forager', 'gatherer', 'scavenger']):
+            return SpatialBehavior(BehaviorType.FORAGER)
+        
         if any(word in ' '.join(trait_names) for word in ['aggressive', 'fierce', 'brutal']):
             return SpatialBehavior(BehaviorType.AGGRESSIVE)
         elif any(word in ' '.join(trait_names) for word in ['defensive', 'cautious', 'careful']):
@@ -111,7 +115,7 @@ class BattleCreature:
             return SpatialBehavior(BehaviorType.SUPPORTIVE)
         elif any(word in ' '.join(trait_names) for word in ['hunter', 'predator']):
             return SpatialBehavior(BehaviorType.HUNTER)
-        elif any(word in ' '.join(trait_names) for word in ['wanderer', 'explorer']):
+        elif any(word in ' '.join(trait_names) for word in ['wanderer', 'explorer', 'curious']):
             return SpatialBehavior(BehaviorType.WANDERER)
         else:
             # Default behavior based on stats
@@ -157,7 +161,9 @@ class SpatialBattle:
         enemy_team: List[Creature],
         arena_width: float = 100.0,
         arena_height: float = 100.0,
-        random_seed: Optional[int] = None
+        random_seed: Optional[int] = None,
+        resource_spawn_rate: float = 0.1,  # Resources per second
+        initial_resources: int = 5
     ):
         """
         Initialize a new spatial battle.
@@ -168,6 +174,8 @@ class SpatialBattle:
             arena_width: Width of the battle arena
             arena_height: Height of the battle arena
             random_seed: Optional seed for reproducible randomness
+            resource_spawn_rate: Number of resources to spawn per second
+            initial_resources: Number of resources to spawn at start
         """
         self.arena = Arena(arena_width, arena_height)
         self.battle_log: List[str] = []
@@ -175,9 +183,15 @@ class SpatialBattle:
         self._event_callbacks: List[Callable[[BattleEvent], None]] = []
         self.current_time: float = 0.0
         self.is_over: bool = False
+        self.resource_spawn_rate = resource_spawn_rate
+        self.time_since_last_resource_spawn: float = 0.0
         
         if random_seed is not None:
             random.seed(random_seed)
+        
+        # Spawn initial resources
+        for _ in range(initial_resources):
+            self._spawn_resource()
         
         # Spawn creatures
         self.player_creatures = self._spawn_team(player_team, "player", is_left_side=True)
@@ -229,6 +243,11 @@ class SpatialBattle:
         """Add a message to the battle log."""
         self.battle_log.append(message)
     
+    def _spawn_resource(self):
+        """Spawn a food resource at a random location in the arena."""
+        resource_pos = self.arena.get_random_position()
+        self.arena.add_resource(resource_pos)
+    
     def update(self, delta_time: float):
         """
         Update battle state for one frame.
@@ -241,6 +260,14 @@ class SpatialBattle:
         
         self.current_time += delta_time
         
+        # Spawn resources over time
+        self.time_since_last_resource_spawn += delta_time
+        if self.resource_spawn_rate > 0:
+            spawn_interval = 1.0 / self.resource_spawn_rate
+            while self.time_since_last_resource_spawn >= spawn_interval:
+                self._spawn_resource()
+                self.time_since_last_resource_spawn -= spawn_interval
+        
         # Update all creatures
         all_creatures = self.player_creatures + self.enemy_creatures
         alive_players = [c for c in self.player_creatures if c.is_alive()]
@@ -251,9 +278,22 @@ class SpatialBattle:
             self._end_battle()
             return
         
+        # Tick hunger for all alive creatures
+        for creature in alive_players + alive_enemies:
+            creature.creature.tick_hunger(delta_time)
+            # Check if creature starved
+            if creature.creature.hunger <= 0 and creature.is_alive():
+                self._log(f"{creature.creature.name} starved to death!")
+                self._emit_event(BattleEvent(
+                    event_type=BattleEventType.CREATURE_FAINT,
+                    target=creature,
+                    message=f"{creature.creature.name} starved to death!"
+                ))
+        
         # Update each creature
         for creature in alive_players + alive_enemies:
-            self._update_creature(creature, alive_players, alive_enemies, delta_time)
+            if creature.is_alive():  # Re-check after hunger tick
+                self._update_creature(creature, alive_players, alive_enemies, delta_time)
         
         # Process status effects
         for creature in alive_players + alive_enemies:
@@ -279,31 +319,41 @@ class SpatialBattle:
         ally_entities = [c.spatial for c in my_allies]
         enemy_entities = [c.spatial for c in my_enemies]
         
-        # Determine target
-        if not creature.target or not creature.target.is_alive():
-            target_entity = creature.behavior.get_target(
+        # Check if creature is hungry and should prioritize food
+        is_hungry = creature.creature.hunger < 40
+        seeking_food = is_hungry and len(self.arena.resources) > 0
+        
+        # Determine movement - prioritize food if hungry
+        if seeking_food:
+            # Override behavior to seek nearest food
+            nearest_resource = min(self.arena.resources, key=lambda r: creature.spatial.position.distance_to(r))
+            movement_target = nearest_resource
+        else:
+            # Determine target
+            if not creature.target or not creature.target.is_alive():
+                target_entity = creature.behavior.get_target(
+                    creature.spatial,
+                    ally_entities,
+                    enemy_entities,
+                    self.arena.hazards,
+                    self.arena.resources
+                )
+                # Find corresponding BattleCreature
+                if target_entity:
+                    for enemy in my_enemies:
+                        if enemy.spatial == target_entity:
+                            creature.target = enemy
+                            break
+            
+            # Determine movement
+            movement_target = creature.behavior.get_movement_target(
                 creature.spatial,
+                creature.target.spatial if creature.target else None,
                 ally_entities,
                 enemy_entities,
                 self.arena.hazards,
                 self.arena.resources
             )
-            # Find corresponding BattleCreature
-            if target_entity:
-                for enemy in my_enemies:
-                    if enemy.spatial == target_entity:
-                        creature.target = enemy
-                        break
-        
-        # Determine movement
-        movement_target = creature.behavior.get_movement_target(
-            creature.spatial,
-            creature.target.spatial if creature.target else None,
-            ally_entities,
-            enemy_entities,
-            self.arena.hazards,
-            self.arena.resources
-        )
         
         # Move towards target
         old_pos = (creature.spatial.position.x, creature.spatial.position.y)
@@ -322,6 +372,31 @@ class SpatialBattle:
                     message=f"{creature.creature.name} moved to ({new_pos[0]:.1f}, {new_pos[1]:.1f})",
                     data={'old_position': old_pos, 'new_position': new_pos}
                 ))
+        
+        # Check for resource collection
+        resources_to_remove = []
+        for resource in self.arena.resources:
+            distance = creature.spatial.position.distance_to(resource)
+            if distance < 2.0:  # Collection range
+                # Eat the resource
+                hunger_restored = creature.creature.eat(40)
+                resources_to_remove.append(resource)
+                self._log(f"{creature.creature.name} ate food and restored {hunger_restored} hunger!")
+                self._emit_event(BattleEvent(
+                    event_type=BattleEventType.RESOURCE_COLLECTED,
+                    actor=creature,
+                    message=f"{creature.creature.name} ate food! Hunger: {creature.creature.hunger}/{creature.creature.max_hunger}",
+                    data={
+                        'resource_position': resource.to_tuple(),
+                        'hunger_restored': hunger_restored,
+                        'current_hunger': creature.creature.hunger
+                    }
+                ))
+                break  # Only collect one resource per update
+        
+        # Remove collected resources
+        for resource in resources_to_remove:
+            self.arena.resources.remove(resource)
         
         # Attempt combat
         if creature.target and creature.can_attack(self.current_time):
@@ -565,6 +640,8 @@ class SpatialBattle:
                     'name': c.creature.name,
                     'hp': c.creature.stats.hp,
                     'max_hp': c.creature.stats.max_hp,
+                    'hunger': c.creature.hunger,
+                    'max_hunger': c.creature.max_hunger,
                     'position': c.spatial.position.to_tuple(),
                     'velocity': c.spatial.velocity.to_tuple(),
                     'alive': c.is_alive()
@@ -576,12 +653,15 @@ class SpatialBattle:
                     'name': c.creature.name,
                     'hp': c.creature.stats.hp,
                     'max_hp': c.creature.stats.max_hp,
+                    'hunger': c.creature.hunger,
+                    'max_hunger': c.creature.max_hunger,
                     'position': c.spatial.position.to_tuple(),
                     'velocity': c.spatial.velocity.to_tuple(),
                     'alive': c.is_alive()
                 }
                 for c in self.enemy_creatures
-            ]
+            ],
+            'resources': [r.to_tuple() for r in self.arena.resources]
         }
 
 

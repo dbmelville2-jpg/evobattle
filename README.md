@@ -26,6 +26,17 @@ Full creature management including:
 
 See [Core Models Documentation](MODELS_DOCUMENTATION.md) for details.
 
+### Ecosystem Survival System ✓
+A complete survival ecosystem simulation featuring:
+- Hunger system with metabolic traits
+- Resource gathering and foraging behavior
+- Trait-driven wandering and exploration
+- Starvation mechanics
+- Dynamic behavior based on hunger levels
+- 15+ predefined ecosystem traits (Forager, Efficient Metabolism, Curious, etc.)
+
+See [Ecosystem Documentation](ECOSYSTEM_DOCUMENTATION.md) for details.
+
 ## Quick Start
 
 ```python
@@ -66,6 +77,8 @@ This project is developed by three specialist agents working in coordination:
 **Important Documentation:**
 - [Battle System Documentation](BATTLE_SYSTEM_DOCUMENTATION.md) - Complete battle system guide
 - [Core Models Documentation](MODELS_DOCUMENTATION.md) - Creature, stats, and ability systems
+- [Ecosystem Documentation](ECOSYSTEM_DOCUMENTATION.md) - Hunger, foraging, and survival mechanics
+- [Rendering Documentation](RENDERING_DOCUMENTATION.md) - Visual rendering and animation systems
 - [Agent Coordination Guide](AGENT_COORDINATION.md) - Team standards, interface contracts, and integration goals
 - [Integration Checklist](INTEGRATION_CHECKLIST.md) - Track implementation progress and integration milestones
 - [Project Architect Vision](https://github.com/dbmelville2-jpg/evobattle/issues/2) - Overall project leadership and vision
@@ -81,6 +94,12 @@ python3 examples/core_models_example.py
 
 # Spatial battle examples
 python3 examples/spatial_battle_example.py
+
+# Ecosystem survival simulation (text-based)
+python3 -m examples.ecosystem_survival_demo
+
+# Ecosystem survival with Pygame visualization
+python3 -m examples.ecosystem_pygame_demo
 ```
 
 ### Pygame Rendering Demo
@@ -98,6 +117,23 @@ python3 examples/pygame_rendering_demo.py
 - HP/energy bars and status indicators
 - Event log showing battle actions
 - Interactive controls (SPACE to pause, ESC to exit)
+
+### Ecosystem Survival Demo
+
+Experience the complete survival ecosystem with hunger and foraging:
+
+```bash
+# Run the Ecosystem Survival Pygame demo
+python3 -m examples.ecosystem_pygame_demo
+```
+
+**Features:**
+- Hunger bars showing creature survival status
+- Food resources scattered in arena
+- Creatures seeking food when hungry
+- Diverse metabolic traits affecting behavior
+- Real-time survival simulation
+- Interactive controls (SPACE to pause, R to restart, ESC to exit)
 
 **Controls:**
 - `SPACE` - Pause/Resume battle

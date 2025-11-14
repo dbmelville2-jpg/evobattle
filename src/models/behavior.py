@@ -19,6 +19,7 @@ class BehaviorType(Enum):
     SUPPORTIVE = "supportive"  # Stays near allies
     WANDERER = "wanderer"      # Moves randomly, explores
     HUNTER = "hunter"          # Targets weakest enemies
+    FORAGER = "forager"        # Prioritizes seeking food/resources
 
 
 class SpatialBehavior:
@@ -172,6 +173,21 @@ class SpatialBehavior:
                 avg_x = sum(a.position.x for a in allies) / len(allies)
                 avg_y = sum(a.position.y for a in allies) / len(allies)
                 return Vector2D(avg_x, avg_y)
+        
+        elif self.behavior_type == BehaviorType.FORAGER:
+            # Prioritize seeking food/resources
+            if resources:
+                # Find nearest resource
+                nearest_resource = min(resources, key=lambda r: entity.position.distance_to(r))
+                return nearest_resource
+            # If no resources available, wander to search
+            if not self.target_position or entity.position.distance_to(self.target_position) < 2.0:
+                import random
+                self.target_position = Vector2D(
+                    entity.position.x + random.uniform(-15, 15),
+                    entity.position.y + random.uniform(-15, 15)
+                )
+            return self.target_position
         
         elif self.behavior_type == BehaviorType.WANDERER:
             # Random exploration

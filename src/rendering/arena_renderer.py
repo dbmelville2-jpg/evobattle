@@ -179,7 +179,8 @@ class ArenaRenderer:
         bounds: tuple,
         arena
     ):
-        """Draw a resource at the specified position."""
+        """Draw a resource/food at the specified position."""
         screen_pos = self._world_to_screen(resource_pos, bounds, arena)
-        pygame.draw.circle(screen, self.resource_color, screen_pos, 6)
-        pygame.draw.circle(screen, (100, 255, 150), screen_pos, 6, 2)
+        # Draw food as a circle with a distinctive color
+        pygame.draw.circle(screen, (80, 200, 60), screen_pos, 8)  # Green center
+        pygame.draw.circle(screen, (120, 255, 100), screen_pos, 8, 2)  # Bright green outline
