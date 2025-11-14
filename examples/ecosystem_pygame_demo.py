@@ -129,7 +129,7 @@ def main():
         width=1200,
         height=800,
         title="EvoBattle - Ecosystem Survival Mode",
-        target_fps=60
+        fps=60
     )
     
     # Create renderers
