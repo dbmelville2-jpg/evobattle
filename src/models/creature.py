@@ -100,6 +100,8 @@ class Creature:
         active_modifiers (List[StatModifier]): Active stat modifiers
         energy (int): Current energy for using abilities
         max_energy (int): Maximum energy
+        hunger (int): Current hunger level (0=starving, 100=full)
+        max_hunger (int): Maximum hunger level
     """
     
     def __init__(
@@ -113,7 +115,9 @@ class Creature:
         abilities: Optional[List[Ability]] = None,
         traits: Optional[List[Trait]] = None,
         energy: int = 100,
-        max_energy: int = 100
+        max_energy: int = 100,
+        hunger: int = 100,
+        max_hunger: int = 100
     ):
         """
         Initialize a new Creature.
@@ -129,6 +133,8 @@ class Creature:
             traits: List of traits
             energy: Starting energy
             max_energy: Maximum energy
+            hunger: Starting hunger (0=starving, 100=full)
+            max_hunger: Maximum hunger
         """
         self.creature_id = creature_id if creature_id else str(uuid.uuid4())
         self.name = name
@@ -151,6 +157,8 @@ class Creature:
         self.active_modifiers: List[StatModifier] = []
         self.energy = energy
         self.max_energy = max_energy
+        self.hunger = hunger
+        self.max_hunger = max_hunger
     
     def get_effective_stats(self) -> Stats:
         """
@@ -327,8 +335,8 @@ class Creature:
         return True
     
     def is_alive(self) -> bool:
-        """Check if creature is still alive."""
-        return self.stats.is_alive()
+        """Check if creature is still alive (HP > 0 and not starved)."""
+        return self.stats.is_alive() and self.hunger > 0
     
     def rest(self):
         """Restore energy and some HP."""
@@ -339,6 +347,50 @@ class Creature:
         # Reset ability cooldowns
         for ability in self.abilities:
             ability.reset_cooldown()
+    
+    def tick_hunger(self, delta_time: float):
+        """
+        Deplete hunger over time based on metabolic traits.
+        
+        Args:
+            delta_time: Time elapsed since last tick (seconds)
+        """
+        # Base hunger depletion rate (1.0 per second means 100 seconds to starve)
+        hunger_depletion = 1.0 * delta_time
+        
+        # Apply metabolic trait modifiers
+        if self.has_trait("Efficient Metabolism"):
+            hunger_depletion *= 0.6  # 40% slower hunger depletion
+        if self.has_trait("Efficient"):
+            hunger_depletion *= 0.7  # 30% slower hunger depletion
+        if self.has_trait("Glutton"):
+            hunger_depletion *= 1.5  # 50% faster hunger depletion
+        if self.has_trait("Voracious"):
+            hunger_depletion *= 1.4  # 40% faster hunger depletion
+        
+        # Deplete hunger
+        self.hunger = max(0, self.hunger - hunger_depletion)
+    
+    def eat(self, food_value: int = 40) -> int:
+        """
+        Consume food to restore hunger.
+        
+        Args:
+            food_value: Amount of hunger to restore
+            
+        Returns:
+            Actual amount of hunger restored
+        """
+        old_hunger = self.hunger
+        self.hunger = min(self.max_hunger, self.hunger + food_value)
+        
+        # Some traits may provide bonus HP when eating
+        if self.has_trait("Voracious") or self.has_trait("Glutton"):
+            # Voracious/Glutton creatures gain a small HP bonus when eating
+            hp_bonus = food_value // 10
+            self.stats.heal(hp_bonus)
+        
+        return int(self.hunger - old_hunger)
     
     def to_dict(self) -> Dict:
         """
@@ -369,7 +421,9 @@ class Creature:
             ],
             'active_modifiers': [mod.to_dict() for mod in self.active_modifiers],
             'energy': self.energy,
-            'max_energy': self.max_energy
+            'max_energy': self.max_energy,
+            'hunger': self.hunger,
+            'max_hunger': self.max_hunger
         }
     
     @staticmethod
@@ -400,7 +454,9 @@ class Creature:
             abilities=abilities,
             traits=traits,
             energy=data.get('energy', 100),
-            max_energy=data.get('max_energy', 100)
+            max_energy=data.get('max_energy', 100),
+            hunger=data.get('hunger', 100),
+            max_hunger=data.get('max_hunger', 100)
         )
         
         # Restore active modifiers

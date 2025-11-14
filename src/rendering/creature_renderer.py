@@ -104,6 +104,9 @@ class CreatureRenderer:
         # Draw HP bar above creature
         self._draw_hp_bar(screen, creature, screen_pos)
         
+        # Draw hunger bar below HP bar
+        self._draw_hunger_bar(screen, creature, screen_pos)
+        
         # Draw energy bar (if applicable)
         if hasattr(creature.creature, 'energy') and creature.creature.energy < creature.creature.max_energy:
             self._draw_energy_bar(screen, creature, screen_pos)
@@ -168,17 +171,52 @@ class CreatureRenderer:
         text_rect = text_surface.get_rect(center=(screen_pos[0], bar_y - 8))
         screen.blit(text_surface, text_rect)
     
+    def _draw_hunger_bar(
+        self,
+        screen: pygame.Surface,
+        creature: BattleCreature,
+        screen_pos: tuple
+    ):
+        """Draw hunger bar below HP bar."""
+        bar_width = 40
+        bar_height = 4
+        bar_x = screen_pos[0] - bar_width // 2
+        bar_y = screen_pos[1] - self.radius - 8
+        
+        # Background (dark gray)
+        bg_rect = pygame.Rect(bar_x, bar_y, bar_width, bar_height)
+        pygame.draw.rect(screen, (40, 40, 40), bg_rect)
+        
+        # Hunger fill
+        hunger_percent = creature.creature.hunger / creature.creature.max_hunger
+        fill_width = int(bar_width * hunger_percent)
+        
+        # Color based on hunger percentage
+        if hunger_percent > 0.6:
+            hunger_color = (216, 186, 67)  # Golden/yellow (well fed)
+        elif hunger_percent > 0.3:
+            hunger_color = (255, 165, 0)  # Orange (getting hungry)
+        else:
+            hunger_color = (200, 50, 50)  # Red (starving)
+        
+        if fill_width > 0:
+            fill_rect = pygame.Rect(bar_x, bar_y, fill_width, bar_height)
+            pygame.draw.rect(screen, hunger_color, fill_rect)
+        
+        # Border
+        pygame.draw.rect(screen, (150, 150, 150), bg_rect, 1)
+    
     def _draw_energy_bar(
         self,
         screen: pygame.Surface,
         creature: BattleCreature,
         screen_pos: tuple
     ):
-        """Draw energy bar below HP bar."""
+        """Draw energy bar below hunger bar."""
         bar_width = 40
-        bar_height = 4
+        bar_height = 3
         bar_x = screen_pos[0] - bar_width // 2
-        bar_y = screen_pos[1] - self.radius - 8
+        bar_y = screen_pos[1] - self.radius - 4  # Below hunger bar
         
         # Background
         bg_rect = pygame.Rect(bar_x, bar_y, bar_width, bar_height)
