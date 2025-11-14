@@ -37,6 +37,17 @@ A complete survival ecosystem simulation featuring:
 
 See [Ecosystem Documentation](ECOSYSTEM_DOCUMENTATION.md) for details.
 
+### Genetic Lineage System ✓
+An evolutionary ecosystem where creatures form dynamic genetic families:
+- Strain-based families instead of fixed teams
+- Color-coded genetic similarity (hue represents lineage)
+- Trait inheritance with mutations (add/remove/modify traits)
+- Natural selection and strain extinction
+- Population analytics tracking dominant/extinct strains
+- Visual evolution through color spectrum changes
+
+See [Lineage System Documentation](LINEAGE_SYSTEM_DOCUMENTATION.md) for details.
+
 ## Quick Start
 
 ```python
@@ -78,6 +89,7 @@ This project is developed by three specialist agents working in coordination:
 - [Battle System Documentation](BATTLE_SYSTEM_DOCUMENTATION.md) - Complete battle system guide
 - [Core Models Documentation](MODELS_DOCUMENTATION.md) - Creature, stats, and ability systems
 - [Ecosystem Documentation](ECOSYSTEM_DOCUMENTATION.md) - Hunger, foraging, and survival mechanics
+- [Lineage System Documentation](LINEAGE_SYSTEM_DOCUMENTATION.md) - Genetic strains and evolution
 - [Rendering Documentation](RENDERING_DOCUMENTATION.md) - Visual rendering and animation systems
 - [Agent Coordination Guide](AGENT_COORDINATION.md) - Team standards, interface contracts, and integration goals
 - [Integration Checklist](INTEGRATION_CHECKLIST.md) - Track implementation progress and integration milestones
@@ -100,6 +112,9 @@ python3 -m examples.ecosystem_survival_demo
 
 # Ecosystem survival with Pygame visualization
 python3 -m examples.ecosystem_pygame_demo
+
+# Genetic strain evolution demo (shows lineage system)
+python3 -m examples.genetic_strain_demo
 ```
 
 ### Pygame Rendering Demo
