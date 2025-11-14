@@ -5,18 +5,50 @@
 The EvoBattle battle system is a comprehensive turn-based combat engine that manages battles between creature teams. It features:
 
 - **Turn-based Combat**: Speed-based turn order with random tiebreaking
+- **Real-Time Execution**: Step-by-step battle execution with event callbacks for visualization
 - **Damage Calculation**: Complex formulas including type effectiveness, defense, and random variance
 - **Status Effects**: Poison, burn, paralysis, sleep, and more
 - **Ability System**: Physical attacks, special abilities, buffs, debuffs, and healing
 - **Battle State Management**: Tracks all battle participants, effects, and progress
-- **Event Logging**: Complete battle history for replay and analysis
+- **Event System**: Real-time battle events for animations and visual feedback
+- **Dual Modes**: Instant simulation OR step-by-step execution for watching battles
+
+## Battle Modes
+
+### Instant Simulation (Classic)
+Run an entire battle instantly - perfect for AI vs AI or quick results:
+
+```python
+battle = Battle([player], [enemy])
+winner = battle.simulate()  # Battle completes instantly
+```
+
+### Real-Time Execution (New!)
+Watch battles unfold step-by-step with visual feedback:
+
+```python
+battle = Battle([player], [enemy])
+
+# Register callback to visualize events
+def on_event(event):
+    if event.event_type == BattleEventType.DAMAGE_DEALT:
+        animate_damage(event.target, event.value)
+
+battle.add_event_callback(on_event)
+
+# Execute battle step-by-step
+battle.start_battle()
+while not battle.state.is_battle_over():
+    time.sleep(0.5)  # Delay to watch
+    battle.execute_turn()
+```
 
 ## Architecture
 
 ### Core Components
 
 ```
-src/systems/battle.py       # Main battle engine
+src/systems/battle.py       # Main battle engine with event system
 src/models/status_effect.py # Status effect system
 src/models/ability.py        # Ability system (existing)
 src/models/creature.py       # Creature system (existing)
@@ -29,11 +61,75 @@ src/models/stats.py          # Stats system (existing)
 START → TURN_SELECTION → ACTION → END_OF_TURN → [repeat] → BATTLE_END
 ```
 
-1. **START**: Initialize battle state, log participants
+1. **START**: Initialize battle state, emit BATTLE_START event
 2. **TURN_SELECTION**: Determine action order based on speed
-3. **ACTION**: Execute creature actions (abilities, attacks)
+3. **ACTION**: Execute creature actions, emit events for each action
 4. **END_OF_TURN**: Process status effects, tick cooldowns, check victory
 5. **BATTLE_END**: Award experience, determine winner
+
+## Real-Time Event System
+
+### Battle Events
+
+The battle system emits 14 types of events:
+
+- **BATTLE_START**: Battle begins
+- **TURN_START**: New turn starts
+- **CREATURE_TURN**: Creature's turn begins
+- **ABILITY_USE**: Creature uses an ability
+- **DAMAGE_DEALT**: Damage is dealt
+- **HEALING**: HP is restored
+- **CRITICAL_HIT**: Critical hit occurs
+- **SUPER_EFFECTIVE**: Super effective attack
+- **NOT_EFFECTIVE**: Not very effective attack
+- **MISS**: Attack misses
+- **BUFF_APPLIED**: Stat increase applied
+- **DEBUFF_APPLIED**: Stat decrease applied
+- **STATUS_APPLIED**: Status effect applied
+- **CREATURE_FAINT**: Creature faints
+- **TURN_END**: Turn ends
+- **BATTLE_END**: Battle ends
+
+### Event Structure
+
+```python
+class BattleEvent:
+    event_type: BattleEventType  # Type of event
+    actor: Optional[Creature]     # Creature performing action
+    target: Optional[Creature]    # Target of action
+    ability: Optional[Ability]    # Ability used (if any)
+    value: Optional[int]          # Damage/healing value
+    message: str                  # Human-readable message
+    data: Dict                    # Additional event data
+    timestamp: float              # When event occurred
+```
+
+### Using Events for Visualization
+
+```python
+def visualize_battle(event):
+    """Callback to visualize battle events"""
+    
+    if event.event_type == BattleEventType.ABILITY_USE:
+        print(f"⚡ {event.actor.name} uses {event.ability.name}!")
+        play_sound("ability_use.wav")
+        
+    elif event.event_type == BattleEventType.DAMAGE_DEALT:
+        print(f"💥 {event.target.name} takes {event.value} damage!")
+        animate_damage_number(event.target, event.value)
+        shake_sprite(event.target)
+        
+    elif event.event_type == BattleEventType.CRITICAL_HIT:
+        print("⚡ Critical hit!")
+        play_sound("critical.wav")
+        flash_screen()
+        
+    elif event.event_type == BattleEventType.CREATURE_FAINT:
+        print(f"💀 {event.target.name} fainted!")
+        play_faint_animation(event.target)
+
+battle.add_event_callback(visualize_battle)
+```
 
 ## Key Classes
 
@@ -42,7 +138,7 @@ START → TURN_SELECTION → ACTION → END_OF_TURN → [repeat] → BATTLE_END
 The main battle engine that orchestrates combat.
 
 ```python
-from src.systems.battle import Battle
+from src.systems.battle import Battle, BattleEventType
 from src.models.creature import Creature
 
 # Create battle
@@ -66,9 +162,31 @@ print(f"Phase: {state.phase}")
 ```
 
 **Key Methods:**
-- `simulate()`: Run complete battle until one side wins
-- `get_battle_log()`: Get list of all battle events
+- `simulate()`: Run complete battle until one side wins (instant)
+- `start_battle()`: Initialize battle for step-by-step execution
+- `execute_turn()`: Execute one complete turn (both creatures act)
+- `execute_action(creature, ability, target)`: Execute a single action
+- `add_event_callback(callback)`: Register callback for battle events
+- `get_battle_log()`: Get list of all battle log messages
 - `get_state()`: Access current battle state
+- `is_ready_for_action()`: Check if battle can continue
+
+**Real-Time Methods:**
+```python
+# Step-by-step battle execution
+battle.start_battle()  # Initialize
+
+while not battle.state.is_battle_over():
+    # Option 1: Execute full turn
+    battle.execute_turn()
+    
+    # Option 2: Execute individual actions
+    # player_action = choose_action()
+    # battle.execute_action(player, ability, target)
+
+# Process final state
+winner_side = battle.state.get_winner()
+```
 
 ### BattleState
 
