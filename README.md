@@ -178,12 +178,12 @@ python3 -m unittest tests.test_creature -v
 
 ## Rendering & Visualization ✓
 Real-time Pygame-based visualization system featuring:
-- 2D spatial arena with team-colored zones and grid
-- Creature rendering with HP/energy bars and status indicators
-- Interactive UI with team panels and battle feed
+- 2D spatial arena with grid and resource locations
+- Creature rendering with HP/hunger bars and strain-based colors
+- Interactive UI with population panels and battle feed
 - Event-driven animations (damage numbers, effects)
 - Pause/resume and input handling
-- Battle state visualization and winner display
+- Battle state visualization and survivor display
 
 See the [Pygame Rendering Demo](#pygame-rendering-demo) below for a live visualization example.
 

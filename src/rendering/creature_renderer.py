@@ -15,32 +15,23 @@ class CreatureRenderer:
     """
     Renders creatures in the battle arena.
     
-    Can render creatures as colored circles using HSV colors from the creature
-    (based on lineage, health, and hunger), or fallback to team colors for
-    backward compatibility. Can be extended to use sprite sheets.
+    Renders creatures as colored circles using HSV colors from the creature
+    (based on lineage/strain). Can be extended to use sprite sheets.
     
     Attributes:
-        player_color: Fallback color for player team
-        enemy_color: Fallback color for enemy team
         radius: Base radius for creature rendering
     """
     
     def __init__(
         self,
-        player_color: tuple = (80, 120, 255),
-        enemy_color: tuple = (255, 100, 100),
         radius: int = 15
     ):
         """
         Initialize the creature renderer.
         
         Args:
-            player_color: RGB color for player team creatures
-            enemy_color: RGB color for enemy team creatures
             radius: Base radius for creature circles
         """
-        self.player_color = player_color
-        self.enemy_color = enemy_color
         self.radius = radius
         
         # Font for creature names

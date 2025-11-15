@@ -70,26 +70,18 @@ def create_ecosystem_battle():
     """Create an ecosystem battle simulation."""
     print("\n=== Creating Ecosystem Battle ===")
     
-    # Create diverse creatures with ecosystem traits
-    team1 = [
+    # Create diverse population of creatures with ecosystem traits
+    population = [
         create_ecosystem_creature("Forager Fox", [FORAGER, EFFICIENT_METABOLISM], level=5),
         create_ecosystem_creature("Curious Cat", [CURIOUS], level=4),
         create_ecosystem_creature("Glutton Bear", [GLUTTON], level=6),
-    ]
-    
-    team2 = [
         create_ecosystem_creature("Hunter Wolf", [AGGRESSIVE, VORACIOUS], level=5),
         create_ecosystem_creature("Cautious Rabbit", [CAUTIOUS, EFFICIENT_METABOLISM], level=4),
         create_ecosystem_creature("Wanderer Bird", [WANDERER], level=4),
     ]
     
-    print("\nTeam 1 (Left side):")
-    for c in team1:
-        trait_names = [t.name for t in c.traits]
-        print(f"  - {c.name}: {', '.join(trait_names)}")
-    
-    print("\nTeam 2 (Right side):")
-    for c in team2:
+    print("\nInitial Population:")
+    for c in population:
         trait_names = [t.name for t in c.traits]
         print(f"  - {c.name}: {', '.join(trait_names)}")
     
@@ -103,8 +95,7 @@ def create_ecosystem_battle():
     
     # Create battle with moderate resource spawning
     battle = SpatialBattle(
-        team1,
-        team2,
+        population,
         arena_width=100.0,
         arena_height=100.0,
         resource_spawn_rate=0.15,  # Moderate spawn rate
@@ -193,8 +184,7 @@ def main():
         event_animator.render(window.screen, battle)
         
         # Render UI
-        alive_players = [c for c in battle.player_creatures if c.is_alive()]
-        alive_enemies = [c for c in battle.enemy_creatures if c.is_alive()]
+        alive_creatures = [c for c in battle.creatures if c.is_alive()]
         
         ui_components.draw_battle_timer(
             window.screen,
@@ -202,27 +192,18 @@ def main():
             (window.width // 2, 30)
         )
         
-        ui_components.draw_team_status(
+        ui_components.draw_population_status(
             window.screen,
-            "Team 1",
-            len(alive_players),
-            len(battle.player_creatures),
+            len(alive_creatures),
+            len(battle.creatures),
             (100, 30)
-        )
-        
-        ui_components.draw_team_status(
-            window.screen,
-            "Team 2",
-            len(alive_enemies),
-            len(battle.enemy_creatures),
-            (window.width - 100, 30)
         )
         
         # Draw resource count
         font = pygame.font.Font(None, 24)
         resource_text = f"Food: {len(battle.arena.resources)}"
         text_surface = font.render(resource_text, True, (120, 255, 100))
-        window.screen.blit(text_surface, (window.width // 2 - 40, 60))
+        window.screen.blit(text_surface, (window.width - 150, 30))
         
         # Draw pause indicator
         if paused:
@@ -240,15 +221,16 @@ def main():
         
         # Draw battle result if over
         if battle.is_over:
+            alive_creatures = [c for c in battle.creatures if c.is_alive()]
             result_font = pygame.font.Font(None, 56)
-            if alive_players and not alive_enemies:
-                result_text = "TEAM 1 WINS!"
-                color = (100, 200, 255)
-            elif alive_enemies and not alive_players:
-                result_text = "TEAM 2 WINS!"
-                color = (255, 100, 100)
+            if len(alive_creatures) == 1:
+                result_text = f"{alive_creatures[0].creature.name} WINS!"
+                color = alive_creatures[0].creature.get_display_color()
+            elif len(alive_creatures) > 1:
+                result_text = f"{len(alive_creatures)} SURVIVORS!"
+                color = (100, 255, 100)
             else:
-                result_text = "DRAW!"
+                result_text = "POPULATION EXTINCT!"
                 color = (200, 200, 100)
             
             text_surface = result_font.render(result_text, True, color)
@@ -283,9 +265,12 @@ def main():
     
     # Cleanup
     pygame.quit()
+    alive_creatures = [c for c in battle.creatures if c.is_alive()]
     print("\n" + "=" * 70)
     print(f"Simulation ended at {battle.current_time:.1f}s")
-    print(f"Final survivors: Team 1: {len(alive_players)}, Team 2: {len(alive_enemies)}")
+    print(f"Final survivors: {len(alive_creatures)}/{len(battle.creatures)}")
+    if len(alive_creatures) == 1:
+        print(f"Winner: {alive_creatures[0].creature.name}")
     print("=" * 70)
     print()
 

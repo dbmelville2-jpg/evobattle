@@ -70,10 +70,9 @@ def create_demo_battle():
     warrior.add_ability(create_ability('power_up'))
     warrior.add_trait(Trait(name="Defensive", defense_modifier=1.2))
     
-    # Create battle with 2v1
+    # Create battle with mixed population
     battle = SpatialBattle(
-        player_team=[dragon, warrior],
-        enemy_team=[serpent],
+        [dragon, warrior, serpent],
         arena_width=100,
         arena_height=60,
         random_seed=42

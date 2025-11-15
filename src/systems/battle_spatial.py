@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Callable, Tuple
 from enum import Enum
 import random
 import time
+import math
 
 from ..models.creature import Creature
 from ..models.ability import Ability, AbilityType, TargetType
@@ -76,8 +77,7 @@ class BattleCreature:
     def __init__(
         self,
         creature: Creature,
-        position: Vector2D,
-        team: str = "player"
+        position: Vector2D
     ):
         self.creature = creature
         self.spatial = SpatialEntity(
@@ -85,7 +85,6 @@ class BattleCreature:
             radius=1.0,
             max_speed=creature.stats.speed / 10.0  # Convert speed stat to spatial speed
         )
-        self.team = team
         self.behavior = self._determine_behavior()
         self.target: Optional['BattleCreature'] = None
         self.ability_cooldowns: Dict[str, float] = {}
@@ -157,8 +156,8 @@ class SpatialBattle:
     
     def __init__(
         self,
-        player_team: List[Creature],
-        enemy_team: List[Creature],
+        creatures_or_team1: List[Creature],
+        team2_or_none: Optional[List[Creature]] = None,
         arena_width: float = 100.0,
         arena_height: float = 100.0,
         random_seed: Optional[int] = None,
@@ -169,14 +168,22 @@ class SpatialBattle:
         Initialize a new spatial battle.
         
         Args:
-            player_team: List of creatures on player's team
-            enemy_team: List of creatures on enemy's team
+            creatures_or_team1: Either a list of all creatures (new API) or player team (old API)
+            team2_or_none: Enemy team if using old API, None for new API
             arena_width: Width of the battle arena
             arena_height: Height of the battle arena
             random_seed: Optional seed for reproducible randomness
             resource_spawn_rate: Number of resources to spawn per second
             initial_resources: Number of resources to spawn at start
         """
+        # Handle backward compatibility - detect old two-team API
+        if team2_or_none is not None:
+            # Old API: two teams passed separately
+            all_creatures = creatures_or_team1 + team2_or_none
+        else:
+            # New API: single list of creatures
+            all_creatures = creatures_or_team1
+        
         self.arena = Arena(arena_width, arena_height)
         self.battle_log: List[str] = []
         self.events: List[BattleEvent] = []
@@ -193,34 +200,43 @@ class SpatialBattle:
         for _ in range(initial_resources):
             self._spawn_resource()
         
-        # Spawn creatures
-        self.player_creatures = self._spawn_team(player_team, "player", is_left_side=True)
-        self.enemy_creatures = self._spawn_team(enemy_team, "enemy", is_left_side=False)
+        # Spawn creatures distributed throughout the arena
+        self._creatures = self._spawn_population(all_creatures)
         
-        self._log(f"Battle started: {len(player_team)} vs {len(enemy_team)} in {arena_width}x{arena_height} arena")
+        self._log(f"Battle started: {len(all_creatures)} creatures in {arena_width}x{arena_height} arena")
     
-    def _spawn_team(
+    def _spawn_population(
         self,
-        creatures: List[Creature],
-        team: str,
-        is_left_side: bool
+        creatures: List[Creature]
     ) -> List[BattleCreature]:
-        """Spawn a team of creatures in the arena."""
+        """Spawn a population of creatures distributed throughout the arena."""
         spawned = []
-        spawn_x = self.arena.width * 0.2 if is_left_side else self.arena.width * 0.8
+        
+        # Distribute creatures across the arena in a grid pattern
+        num_creatures = len(creatures)
+        grid_cols = max(2, int(math.sqrt(num_creatures * 2)))
+        grid_rows = (num_creatures + grid_cols - 1) // grid_cols
+        
+        cell_width = self.arena.width / grid_cols
+        cell_height = self.arena.height / grid_rows
         
         for i, creature in enumerate(creatures):
-            # Distribute vertically
-            spawn_y = (i + 1) * self.arena.height / (len(creatures) + 1)
-            position = Vector2D(spawn_x, spawn_y)
+            # Calculate grid position
+            col = i % grid_cols
+            row = i // grid_cols
             
-            battle_creature = BattleCreature(creature, position, team)
+            # Add some randomness within the cell
+            x = (col + 0.3 + random.random() * 0.4) * cell_width
+            y = (row + 0.3 + random.random() * 0.4) * cell_height
+            position = Vector2D(x, y)
+            
+            battle_creature = BattleCreature(creature, position)
             spawned.append(battle_creature)
             
             self._emit_event(BattleEvent(
                 event_type=BattleEventType.CREATURE_SPAWN,
                 actor=battle_creature,
-                message=f"{creature.name} spawned at ({spawn_x:.1f}, {spawn_y:.1f})",
+                message=f"{creature.name} spawned at ({x:.1f}, {y:.1f})",
                 data={'position': position.to_tuple()}
             ))
         
@@ -233,16 +249,38 @@ class SpatialBattle:
     @property
     def creatures(self) -> List[BattleCreature]:
         """
-        Get all creatures in the battle (combined from both teams).
-        
-        This property provides backward compatibility with the individual-based
-        battle API, allowing renderers and other systems to iterate over all
-        creatures regardless of team structure.
+        Get all creatures in the battle.
         
         Returns:
-            Combined list of all BattleCreatures from both teams
+            List of all BattleCreatures in the population
         """
-        return self.player_creatures + self.enemy_creatures
+        return self._creatures
+    
+    @property
+    def player_creatures(self) -> List[BattleCreature]:
+        """
+        Backward compatibility property for accessing creatures.
+        Returns first half of creatures (simulating old "player team").
+        
+        This property exists for compatibility with old code but will be deprecated.
+        Use the 'creatures' property instead.
+        """
+        # For backward compatibility, split the list in half
+        mid = len(self._creatures) // 2
+        return self._creatures[:mid] if mid > 0 else self._creatures
+    
+    @property
+    def enemy_creatures(self) -> List[BattleCreature]:
+        """
+        Backward compatibility property for accessing creatures.
+        Returns second half of creatures (simulating old "enemy team").
+        
+        This property exists for compatibility with old code but will be deprecated.
+        Use the 'creatures' property instead.
+        """
+        # For backward compatibility, split the list in half
+        mid = len(self._creatures) // 2
+        return self._creatures[mid:] if mid > 0 else []
     
     def _emit_event(self, event: BattleEvent):
         """Emit a battle event to all registered callbacks."""
@@ -283,17 +321,15 @@ class SpatialBattle:
                 self.time_since_last_resource_spawn -= spawn_interval
         
         # Update all creatures
-        all_creatures = self.player_creatures + self.enemy_creatures
-        alive_players = [c for c in self.player_creatures if c.is_alive()]
-        alive_enemies = [c for c in self.enemy_creatures if c.is_alive()]
+        alive_creatures = [c for c in self._creatures if c.is_alive()]
         
-        # Check victory condition
-        if not alive_players or not alive_enemies:
+        # Check if population has collapsed (all dead or too few to continue)
+        if len(alive_creatures) <= 1:
             self._end_battle()
             return
         
         # Tick hunger for all alive creatures
-        for creature in alive_players + alive_enemies:
+        for creature in alive_creatures:
             creature.creature.tick_hunger(delta_time)
             # Check if creature starved
             if creature.creature.hunger <= 0 and creature.is_alive():
@@ -305,33 +341,26 @@ class SpatialBattle:
                 ))
         
         # Update each creature
-        for creature in alive_players + alive_enemies:
+        for creature in alive_creatures:
             if creature.is_alive():  # Re-check after hunger tick
-                self._update_creature(creature, alive_players, alive_enemies, delta_time)
+                self._update_creature(creature, alive_creatures, delta_time)
         
         # Process status effects
-        for creature in alive_players + alive_enemies:
+        for creature in alive_creatures:
             self._process_status_effects(creature)
     
     def _update_creature(
         self,
         creature: BattleCreature,
-        allies: List[BattleCreature],
-        enemies: List[BattleCreature],
+        all_alive: List[BattleCreature],
         delta_time: float
     ):
         """Update a single creature's AI, movement, and combat."""
-        # Get allies and enemies for this creature
-        if creature.team == "player":
-            my_allies = [c for c in allies if c != creature]
-            my_enemies = enemies
-        else:
-            my_allies = [c for c in enemies if c != creature]
-            my_enemies = allies
+        # Get other creatures as potential targets/allies
+        other_creatures = [c for c in all_alive if c != creature]
         
         # Convert to spatial entities for behavior system
-        ally_entities = [c.spatial for c in my_allies]
-        enemy_entities = [c.spatial for c in my_enemies]
+        other_entities = [c.spatial for c in other_creatures]
         
         # Check if creature is hungry and should prioritize food
         is_hungry = creature.creature.hunger < 40
@@ -347,24 +376,24 @@ class SpatialBattle:
             if not creature.target or not creature.target.is_alive():
                 target_entity = creature.behavior.get_target(
                     creature.spatial,
-                    ally_entities,
-                    enemy_entities,
+                    [],  # No allies in free-for-all
+                    other_entities,
                     self.arena.hazards,
                     self.arena.resources
                 )
                 # Find corresponding BattleCreature
                 if target_entity:
-                    for enemy in my_enemies:
-                        if enemy.spatial == target_entity:
-                            creature.target = enemy
+                    for other in other_creatures:
+                        if other.spatial == target_entity:
+                            creature.target = other
                             break
             
             # Determine movement
             movement_target = creature.behavior.get_movement_target(
                 creature.spatial,
                 creature.target.spatial if creature.target else None,
-                ally_entities,
-                enemy_entities,
+                [],  # No allies in free-for-all
+                other_entities,
                 self.arena.hazards,
                 self.arena.resources
             )
@@ -589,27 +618,34 @@ class SpatialBattle:
         creature.creature.tick_modifiers()
     
     def _end_battle(self):
-        """End the battle and determine winner."""
+        """End the battle when population has collapsed."""
         self.is_over = True
         
-        alive_players = [c for c in self.player_creatures if c.is_alive()]
-        alive_enemies = [c for c in self.enemy_creatures if c.is_alive()]
+        alive_creatures = [c for c in self._creatures if c.is_alive()]
         
-        if alive_players:
-            winner_team = "player"
-            winners = alive_players
+        if len(alive_creatures) == 1:
+            self._log(f"\n=== Battle End - Last survivor: {alive_creatures[0].creature.name} ===")
+            self._emit_event(BattleEvent(
+                event_type=BattleEventType.BATTLE_END,
+                message=f"Battle ended - {alive_creatures[0].creature.name} is the last survivor!",
+                data={'survivors': 1, 'last_creature': alive_creatures[0].creature.name}
+            ))
+        elif len(alive_creatures) > 1:
+            self._log(f"\n=== Battle End - {len(alive_creatures)} survivors remain ===")
+            self._emit_event(BattleEvent(
+                event_type=BattleEventType.BATTLE_END,
+                message=f"Battle ended - {len(alive_creatures)} survivors remain",
+                data={'survivors': len(alive_creatures)}
+            ))
         else:
-            winner_team = "enemy"
-            winners = alive_enemies
-        
-        self._log(f"\n=== Battle End - Winner: {winner_team} ===")
-        self._emit_event(BattleEvent(
-            event_type=BattleEventType.BATTLE_END,
-            message=f"Battle ended - {winner_team} wins!",
-            data={'winner': winner_team, 'survivors': len(winners)}
-        ))
+            self._log(f"\n=== Battle End - Total extinction ===")
+            self._emit_event(BattleEvent(
+                event_type=BattleEventType.BATTLE_END,
+                message=f"Battle ended - population extinct",
+                data={'survivors': 0}
+            ))
     
-    def simulate(self, duration: float = 60.0, time_step: float = 0.1) -> str:
+    def simulate(self, duration: float = 60.0, time_step: float = 0.1) -> Optional[str]:
         """
         Simulate the entire battle for a duration or until it ends.
         
@@ -618,7 +654,7 @@ class SpatialBattle:
             time_step: Time between updates (smaller = more accurate)
             
         Returns:
-            Winning team ('player' or 'enemy')
+            None (no longer returns winner as there are no teams)
         """
         self._emit_event(BattleEvent(
             event_type=BattleEventType.BATTLE_START,
@@ -632,13 +668,10 @@ class SpatialBattle:
             elapsed += time_step
         
         if not self.is_over:
-            # Timeout - determine winner by HP
-            player_hp = sum(c.creature.stats.hp for c in self.player_creatures)
-            enemy_hp = sum(c.creature.stats.hp for c in self.enemy_creatures)
-            return "player" if player_hp > enemy_hp else "enemy"
+            # Timeout - battle continues
+            return None
         
-        alive_players = [c for c in self.player_creatures if c.is_alive()]
-        return "player" if alive_players else "enemy"
+        return None
     
     def get_battle_log(self) -> List[str]:
         """Get the complete battle log."""
@@ -649,7 +682,7 @@ class SpatialBattle:
         return {
             'time': self.current_time,
             'is_over': self.is_over,
-            'players': [
+            'creatures': [
                 {
                     'name': c.creature.name,
                     'hp': c.creature.stats.hp,
@@ -660,20 +693,7 @@ class SpatialBattle:
                     'velocity': c.spatial.velocity.to_tuple(),
                     'alive': c.is_alive()
                 }
-                for c in self.player_creatures
-            ],
-            'enemies': [
-                {
-                    'name': c.creature.name,
-                    'hp': c.creature.stats.hp,
-                    'max_hp': c.creature.stats.max_hp,
-                    'hunger': c.creature.hunger,
-                    'max_hunger': c.creature.max_hunger,
-                    'position': c.spatial.position.to_tuple(),
-                    'velocity': c.spatial.velocity.to_tuple(),
-                    'alive': c.is_alive()
-                }
-                for c in self.enemy_creatures
+                for c in self._creatures
             ],
             'resources': [r.to_tuple() for r in self.arena.resources]
         }
