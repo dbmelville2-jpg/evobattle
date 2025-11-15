@@ -60,33 +60,52 @@ class SpatialEntity:
         self,
         position: Optional[Vector2D] = None,
         radius: float = 1.0,
-        max_speed: float = 1.0
+        max_speed: float = 1.0,
+        acceleration: float = 5.0,
+        damping: float = 0.85
     ):
         self.position = position or Vector2D(0, 0)
         self.velocity = Vector2D(0, 0)
         self.radius = radius
         self.max_speed = max_speed
+        self.acceleration = acceleration  # How quickly velocity changes
+        self.damping = damping  # Velocity decay per second (0.85 = lose 15% per second)
     
     def update(self, delta_time: float):
         """
-        Update position based on velocity.
+        Update position based on velocity with damping.
         
         Args:
             delta_time: Time elapsed since last update (seconds)
         """
+        # Apply damping to velocity (exponential decay)
+        damping_factor = self.damping ** delta_time
+        self.velocity = self.velocity * damping_factor
+        
+        # Update position
         self.position = self.position + (self.velocity * delta_time)
     
-    def move_towards(self, target: Vector2D, speed: Optional[float] = None):
+    def move_towards(self, target: Vector2D, speed: Optional[float] = None, delta_time: float = 0.016):
         """
-        Set velocity to move towards a target position.
+        Set velocity to move towards a target position with smooth acceleration.
         
         Args:
             target: Target position to move towards
             speed: Movement speed (uses max_speed if None)
+            delta_time: Time step for acceleration calculation (default 60fps = 0.016s)
         """
         speed = speed or self.max_speed
         direction = (target - self.position).normalized()
-        self.velocity = direction * speed
+        desired_velocity = direction * speed
+        
+        # Smoothly accelerate towards desired velocity
+        velocity_change = (desired_velocity - self.velocity) * self.acceleration * delta_time
+        self.velocity = self.velocity + velocity_change
+        
+        # Clamp velocity to max speed
+        velocity_magnitude = self.velocity.magnitude()
+        if velocity_magnitude > self.max_speed:
+            self.velocity = self.velocity.normalized() * self.max_speed
     
     def stop(self):
         """Stop all movement."""

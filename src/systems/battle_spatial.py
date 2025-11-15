@@ -93,6 +93,15 @@ class BattleCreature:
         self.ability_cooldowns: Dict[str, float] = {}
         self.last_attack_time: float = 0
         self.attack_cooldown: float = 1.0  # Seconds between attacks
+        
+        # Target retention to prevent rapid retargeting
+        self.target_retention_distance: float = 15.0  # Keep target if within this distance
+        self.min_retarget_time: float = 0.5  # Minimum seconds before changing target
+        self.last_retarget_time: float = 0.0
+        
+        # Movement state to prevent jitter
+        self.current_movement_target: Optional[Vector2D] = None
+        self.last_behavior_state: str = "combat"  # Track if seeking food vs combat (start in combat mode)
     
     def _determine_behavior(self) -> SpatialBehavior:
         """Determine behavior based on creature traits."""
@@ -379,8 +388,21 @@ class SpatialBattle:
         other_entities = [c.spatial for c in other_creatures]
         
         # Check if creature is hungry and should prioritize food
-        is_hungry = creature.creature.hunger < 40
-        seeking_food = is_hungry and len(self.arena.resources) > 0
+        # Use hysteresis to prevent rapid behavior flipping at threshold
+        HUNGER_THRESHOLD_LOW = 35  # Start seeking food
+        HUNGER_THRESHOLD_HIGH = 50  # Stop seeking food (buffer zone)
+        
+        current_state = "seeking_food" if creature.last_behavior_state == "seeking_food" else "combat"
+        
+        if current_state == "combat" and creature.creature.hunger < HUNGER_THRESHOLD_LOW and len(self.arena.resources) > 0:
+            # Switch to seeking food
+            current_state = "seeking_food"
+        elif current_state == "seeking_food" and (creature.creature.hunger >= HUNGER_THRESHOLD_HIGH or len(self.arena.resources) == 0):
+            # Switch back to combat
+            current_state = "combat"
+        
+        creature.last_behavior_state = current_state
+        seeking_food = (current_state == "seeking_food")
         
         # Determine movement - prioritize food if hungry
         if seeking_food:
@@ -388,8 +410,23 @@ class SpatialBattle:
             nearest_resource = min(self.arena.resources, key=lambda r: creature.spatial.position.distance_to(r))
             movement_target = nearest_resource
         else:
-            # Determine target
+            # Determine target with hysteresis to prevent rapid retargeting
+            should_retarget = False
+            
             if not creature.target or not creature.target.is_alive():
+                should_retarget = True
+            elif self.current_time - creature.last_retarget_time >= creature.min_retarget_time:
+                # Check if current target is too far and there's a closer target
+                current_distance = creature.spatial.distance_to(creature.target.spatial)
+                if current_distance > creature.target_retention_distance:
+                    # Look for a closer target
+                    if other_creatures:
+                        closest_distance = min(creature.spatial.distance_to(c.spatial) for c in other_creatures if c != creature.target)
+                        # Only retarget if significantly closer (20% threshold)
+                        if closest_distance < current_distance * 0.8:
+                            should_retarget = True
+            
+            if should_retarget:
                 target_entity = creature.behavior.get_target(
                     creature.spatial,
                     [],  # No allies in free-for-all
@@ -402,6 +439,7 @@ class SpatialBattle:
                     for other in other_creatures:
                         if other.spatial == target_entity:
                             creature.target = other
+                            creature.last_retarget_time = self.current_time
                             break
             
             # Determine movement
@@ -414,10 +452,10 @@ class SpatialBattle:
                 self.arena.resources
             )
         
-        # Move towards target
+        # Move towards target with smooth acceleration
         old_pos = (creature.spatial.position.x, creature.spatial.position.y)
         if movement_target:
-            creature.spatial.move_towards(movement_target)
+            creature.spatial.move_towards(movement_target, delta_time=delta_time)
             creature.spatial.update(delta_time)
             
             # Keep within bounds
