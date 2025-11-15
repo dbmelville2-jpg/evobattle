@@ -1,5 +1,13 @@
 """
-Fighter model - Represents a battle fighter with attributes and traits.
+Fighter model - Legacy fighter representation.
+
+.. deprecated::
+    This class is deprecated and kept for backward compatibility only.
+    Use :class:`Creature` instead, which provides a complete implementation
+    with stats system, abilities, evolution, and genetic lineage tracking.
+    
+    The Creature class is the current standard for representing fighters
+    in the EvoBattle game.
 """
 
 

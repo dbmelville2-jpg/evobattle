@@ -1,5 +1,16 @@
 """
-Lineage model - Tracks creature ancestry, evolutionary history, and strain membership.
+Lineage model - Legacy lineage tracking system.
+
+.. deprecated::
+    This class is deprecated and kept for backward compatibility only.
+    Lineage tracking is now integrated directly into the :class:`Creature` class
+    through the following attributes:
+    - parent_ids: List of parent creature IDs
+    - strain_id: Genetic strain/family identifier
+    - generation: Generation number
+    - hue: Visual lineage indicator
+    
+    Use Creature's built-in lineage tracking instead of this separate class.
 """
 
 
