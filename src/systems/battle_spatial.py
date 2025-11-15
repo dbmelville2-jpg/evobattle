@@ -39,6 +39,7 @@ class BattleEventType(Enum):
     RESOURCE_COLLECTED = "resource_collected"
     CREATURE_BIRTH = "creature_birth"
     CREATURE_DEATH = "creature_death"
+    CREATURE_CONSUMED = "creature_consumed"
     BATTLE_END = "battle_end"
 
 
@@ -479,21 +480,24 @@ class SpatialBattle:
         for resource in self.arena.resources:
             distance = creature.spatial.position.distance_to(resource)
             if distance < 2.0:  # Collection range
-                # Eat the resource
-                hunger_restored = creature.creature.eat(40)
-                resources_to_remove.append(resource)
-                self._log(f"{creature.creature.name} ate food and restored {hunger_restored} hunger!")
-                self._emit_event(BattleEvent(
-                    event_type=BattleEventType.RESOURCE_COLLECTED,
-                    actor=creature,
-                    message=f"{creature.creature.name} ate food! Hunger: {creature.creature.hunger}/{creature.creature.max_hunger}",
-                    data={
-                        'resource_position': resource.to_tuple(),
-                        'hunger_restored': hunger_restored,
-                        'current_hunger': creature.creature.hunger
-                    }
-                ))
-                break  # Only collect one resource per update
+                # Check if creature can eat plant resources (herbivore or omnivore)
+                if creature.creature.can_eat_food_type("plant"):
+                    # Eat the resource
+                    hunger_restored = creature.creature.eat(40, food_type="plant")
+                    if hunger_restored > 0:
+                        resources_to_remove.append(resource)
+                        self._log(f"{creature.creature.name} ate food and restored {hunger_restored} hunger!")
+                        self._emit_event(BattleEvent(
+                            event_type=BattleEventType.RESOURCE_COLLECTED,
+                            actor=creature,
+                            message=f"{creature.creature.name} ate food! Hunger: {creature.creature.hunger}/{creature.creature.max_hunger}",
+                            data={
+                                'resource_position': resource.to_tuple(),
+                                'hunger_restored': hunger_restored,
+                                'current_hunger': creature.creature.hunger
+                            }
+                        ))
+                        break  # Only collect one resource per update
         
         # Remove collected resources
         for resource in resources_to_remove:
@@ -591,6 +595,9 @@ class SpatialBattle:
                     target=defender,
                     message=f"{defender.creature.name} was defeated!"
                 ))
+                
+                # Allow nearby carnivores/omnivores to consume the corpse
+                self._handle_corpse_consumption(defender, attacker)
         
         elif ability.ability_type == AbilityType.HEALING:
             heal_amount = ability.power
@@ -671,6 +678,52 @@ class SpatialBattle:
     def _check_accuracy(self, accuracy: int) -> bool:
         """Check if an ability hits."""
         return random.randint(1, 100) <= accuracy
+    
+    def _handle_corpse_consumption(self, corpse: BattleCreature, killer: BattleCreature):
+        """
+        Allow nearby carnivores/omnivores to consume a defeated creature.
+        
+        Args:
+            corpse: The defeated creature
+            killer: The creature that defeated the corpse
+        """
+        # Define consumption radius
+        CONSUMPTION_RADIUS = 5.0
+        CORPSE_FOOD_VALUE = 50  # Creatures provide more food than pellets
+        
+        # Find nearby creatures that can eat creatures (carnivores and omnivores)
+        potential_consumers = []
+        
+        # Prioritize the killer
+        if killer.creature.can_eat_food_type("creature"):
+            potential_consumers.append(killer)
+        
+        # Then check other nearby creatures
+        for creature in self._creatures:
+            if creature.is_alive() and creature != killer:
+                distance = creature.spatial.distance_to(corpse.spatial)
+                if distance <= CONSUMPTION_RADIUS and creature.creature.can_eat_food_type("creature"):
+                    potential_consumers.append(creature)
+        
+        # Allow one creature to consume the corpse
+        if potential_consumers:
+            consumer = potential_consumers[0]  # First one gets it
+            hunger_restored = consumer.creature.eat(CORPSE_FOOD_VALUE, food_type="creature")
+            
+            if hunger_restored > 0:
+                self._log(f"{consumer.creature.name} consumed {corpse.creature.name}'s corpse and restored {hunger_restored} hunger!")
+                self._emit_event(BattleEvent(
+                    event_type=BattleEventType.CREATURE_CONSUMED,
+                    actor=consumer,
+                    target=corpse,
+                    value=hunger_restored,
+                    message=f"{consumer.creature.name} consumed {corpse.creature.name}! Hunger: {consumer.creature.hunger}/{consumer.creature.max_hunger}",
+                    data={
+                        'hunger_restored': hunger_restored,
+                        'current_hunger': consumer.creature.hunger,
+                        'corpse_name': corpse.creature.name
+                    }
+                ))
     
     def _process_status_effects(self, creature: BattleCreature):
         """Process status effects (simplified for spatial combat)."""

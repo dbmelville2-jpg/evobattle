@@ -190,6 +190,10 @@ class Creature:
         self.max_energy = max_energy
         self.hunger = hunger
         self.max_hunger = max_hunger
+        
+        # Recalculate stats with trait modifiers applied
+        if self.traits:
+            self.stats = self.get_effective_stats()
     
     def get_effective_stats(self) -> Stats:
         """
@@ -450,16 +454,27 @@ class Creature:
         # Deplete hunger
         self.hunger = max(0, self.hunger - hunger_depletion)
     
-    def eat(self, food_value: int = 40) -> int:
+    def eat(self, food_value: int = 40, food_type: str = "plant") -> int:
         """
         Consume food to restore hunger.
         
         Args:
             food_value: Amount of hunger to restore
+            food_type: Type of food being consumed ("plant" or "creature")
             
         Returns:
-            Actual amount of hunger restored
+            Actual amount of hunger restored (0 if dietary restrictions prevent eating)
         """
+        # Check dietary restrictions
+        if food_type == "plant":
+            # Carnivores cannot eat plants
+            if self.has_trait("Carnivore"):
+                return 0
+        elif food_type == "creature":
+            # Herbivores cannot eat creatures
+            if self.has_trait("Herbivore"):
+                return 0
+        
         old_hunger = self.hunger
         self.hunger = min(self.max_hunger, self.hunger + food_value)
         
@@ -470,6 +485,24 @@ class Creature:
             self.stats.heal(hp_bonus)
         
         return int(self.hunger - old_hunger)
+    
+    def can_eat_food_type(self, food_type: str) -> bool:
+        """
+        Check if creature can eat a specific food type based on dietary traits.
+        
+        Args:
+            food_type: Type of food ("plant" or "creature")
+            
+        Returns:
+            True if creature can eat this food type
+        """
+        if food_type == "plant":
+            # Carnivores cannot eat plants
+            return not self.has_trait("Carnivore")
+        elif food_type == "creature":
+            # Herbivores cannot eat creatures
+            return not self.has_trait("Herbivore")
+        return True
     
     def to_dict(self) -> Dict:
         """
