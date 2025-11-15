@@ -175,7 +175,8 @@ class SpatialBattle:
         arena_height: float = 100.0,
         random_seed: Optional[int] = None,
         resource_spawn_rate: float = 0.1,  # Resources per second
-        initial_resources: int = 5
+        initial_resources: int = 5,
+        living_world_enhancer: Optional['LivingWorldBattleEnhancer'] = None
     ):
         """
         Initialize a new spatial battle.
@@ -188,6 +189,7 @@ class SpatialBattle:
             random_seed: Optional seed for reproducible randomness
             resource_spawn_rate: Number of resources to spawn per second
             initial_resources: Number of resources to spawn at start
+            living_world_enhancer: Optional living world enhancer for deep simulation features
         """
         # Handle backward compatibility - detect old two-team API
         if team2_or_none is not None:
@@ -205,6 +207,9 @@ class SpatialBattle:
         self.is_over: bool = False
         self.resource_spawn_rate = resource_spawn_rate
         self.time_since_last_resource_spawn: float = 0.0
+        
+        # Living world enhancer for deep simulation
+        self.enhancer = living_world_enhancer
         
         # Breeding system and population statistics
         self.breeding_system = Breeding(mutation_rate=0.1, trait_inheritance_chance=0.8)
@@ -432,30 +437,67 @@ class SpatialBattle:
                             should_retarget = True
             
             if should_retarget:
-                target_entity = creature.behavior.get_target(
+                # Use living world enhancer for personality-driven target selection if available
+                selected_target = None
+                if self.enhancer:
+                    potential_targets = [c.creature for c in other_creatures]
+                    selected_creature = self.enhancer.enhance_target_selection(
+                        creature.creature,
+                        potential_targets
+                    )
+                    if selected_creature:
+                        # Find the corresponding BattleCreature
+                        for other in other_creatures:
+                            if other.creature == selected_creature:
+                                selected_target = other
+                                break
+                
+                # Fall back to default behavior if enhancer didn't select a target
+                if not selected_target:
+                    target_entity = creature.behavior.get_target(
+                        creature.spatial,
+                        [],  # No allies in free-for-all
+                        other_entities,
+                        self.arena.hazards,
+                        self.arena.resources
+                    )
+                    # Find corresponding BattleCreature
+                    if target_entity:
+                        for other in other_creatures:
+                            if other.spatial == target_entity:
+                                selected_target = other
+                                break
+                
+                if selected_target:
+                    creature.target = selected_target
+                    creature.last_retarget_time = self.current_time
+            
+            # Check if creature should retreat based on personality (living world)
+            should_flee = False
+            if self.enhancer and creature.target:
+                enemy_count = len([c for c in other_creatures if c.is_alive()])
+                should_flee = self.enhancer.should_retreat(creature.creature, enemy_count)
+            
+            # Determine movement
+            if should_flee and creature.target:
+                # Move away from target
+                direction = creature.spatial.position - creature.target.spatial.position
+                if direction.magnitude() > 0:
+                    direction = direction.normalized()
+                    flee_distance = 20.0  # Distance to flee
+                    movement_target = creature.spatial.position + (direction * flee_distance)
+                else:
+                    movement_target = None
+            else:
+                # Normal movement behavior
+                movement_target = creature.behavior.get_movement_target(
                     creature.spatial,
+                    creature.target.spatial if creature.target else None,
                     [],  # No allies in free-for-all
                     other_entities,
                     self.arena.hazards,
                     self.arena.resources
                 )
-                # Find corresponding BattleCreature
-                if target_entity:
-                    for other in other_creatures:
-                        if other.spatial == target_entity:
-                            creature.target = other
-                            creature.last_retarget_time = self.current_time
-                            break
-            
-            # Determine movement
-            movement_target = creature.behavior.get_movement_target(
-                creature.spatial,
-                creature.target.spatial if creature.target else None,
-                [],  # No allies in free-for-all
-                other_entities,
-                self.arena.hazards,
-                self.arena.resources
-            )
         
         # Move towards target with smooth acceleration
         old_pos = (creature.spatial.position.x, creature.spatial.position.y)
@@ -558,8 +600,16 @@ class SpatialBattle:
         ability.use()
         attacker.creature.energy = max(0, attacker.creature.energy - ability.energy_cost)
         
-        # Check accuracy
-        if not self._check_accuracy(ability.accuracy):
+        # Check accuracy with dodge modifier
+        hit = self._check_accuracy(ability.accuracy)
+        
+        # Apply living world dodge chance
+        if hit and self.enhancer:
+            dodge_chance = self.enhancer.calculate_dodge_chance_modifier(defender.creature)
+            if random.random() < dodge_chance:
+                hit = False
+        
+        if not hit:
             self._log(f"{ability.name} missed!")
             self._emit_event(BattleEvent(
                 event_type=BattleEventType.MISS,
@@ -568,14 +618,33 @@ class SpatialBattle:
                 ability=ability,
                 message=f"{ability.name} missed!"
             ))
+            # Record miss for living world
+            if self.enhancer:
+                self.enhancer.on_attack_made(
+                    attacker.creature,
+                    defender.creature,
+                    damage=0,
+                    was_critical=False,
+                    hit=False
+                )
             return
         
         # Apply damage or effects
         if ability.ability_type in [AbilityType.PHYSICAL, AbilityType.SPECIAL]:
-            damage = self._calculate_damage(attacker.creature, defender.creature, ability)
+            damage, was_critical = self._calculate_damage(attacker.creature, defender.creature, ability)
             was_alive_before_damage = defender.is_alive()
             actual_damage = defender.creature.stats.take_damage(damage)
             self._log(f"{defender.creature.name} takes {actual_damage} damage! (HP: {defender.creature.stats.hp}/{defender.creature.stats.max_hp})")
+            
+            # Record attack for living world
+            if self.enhancer:
+                self.enhancer.on_attack_made(
+                    attacker.creature,
+                    defender.creature,
+                    actual_damage,
+                    was_critical,
+                    hit=True
+                )
             
             self._emit_event(BattleEvent(
                 event_type=BattleEventType.DAMAGE_DEALT,
@@ -590,6 +659,16 @@ class SpatialBattle:
             # Only count death if creature was alive before this attack
             if was_alive_before_damage and not defender.is_alive():
                 self.death_count += 1
+                
+                # Record kill for living world
+                if self.enhancer:
+                    location = (defender.spatial.position.x, defender.spatial.position.y)
+                    self.enhancer.on_creature_killed(
+                        attacker.creature,
+                        defender.creature,
+                        location
+                    )
+                
                 self._emit_event(BattleEvent(
                     event_type=BattleEventType.CREATURE_DEATH,
                     target=defender,
@@ -616,8 +695,13 @@ class SpatialBattle:
         attacker: Creature,
         defender: Creature,
         ability: Ability
-    ) -> int:
-        """Calculate damage (reuses turn-based formula)."""
+    ) -> Tuple[int, bool]:
+        """
+        Calculate damage (reuses turn-based formula).
+        
+        Returns:
+            Tuple of (damage, was_critical)
+        """
         base_damage = ability.calculate_damage(
             attacker.stats.attack,
             defender.stats.defense
@@ -645,8 +729,13 @@ class SpatialBattle:
         # Random variance
         damage = int(damage * random.uniform(0.85, 1.0))
         
-        # Critical hit
-        if random.random() < 0.0625:
+        # Critical hit with living world modifiers
+        crit_chance = 0.0625  # Base 6.25% chance
+        if self.enhancer:
+            crit_chance += self.enhancer.calculate_critical_chance_modifier(attacker)
+        
+        is_critical = random.random() < crit_chance
+        if is_critical:
             damage = int(damage * 1.5)
             self._log("Critical hit!")
             self._emit_event(BattleEvent(
@@ -654,7 +743,16 @@ class SpatialBattle:
                 message="Critical hit!"
             ))
         
-        return max(1, damage)
+        # Apply living world damage modifiers
+        if self.enhancer:
+            damage = self.enhancer.calculate_damage_modifier(
+                attacker,
+                defender,
+                damage,
+                is_critical
+            )
+        
+        return max(1, int(damage)), is_critical
     
     def _get_type_effectiveness(
         self,
@@ -768,6 +866,14 @@ class SpatialBattle:
                     )
                     
                     if offspring:
+                        # Record breeding for living world
+                        if self.enhancer:
+                            self.enhancer.on_breeding(
+                                creature1.creature,
+                                creature2.creature,
+                                offspring
+                            )
+                        
                         # Spawn offspring near parents
                         spawn_pos = Vector2D(
                             (creature1.spatial.position.x + creature2.spatial.position.x) / 2,
@@ -805,6 +911,11 @@ class SpatialBattle:
         self.is_over = True
         
         alive_creatures = [c for c in self._creatures if c.is_alive()]
+        
+        # Record battle end for living world
+        if self.enhancer:
+            survivors = [bc.creature for bc in alive_creatures]
+            self.enhancer.on_battle_end(survivors)
         
         if len(alive_creatures) == 1:
             self._log(f"\n=== Battle End - Last survivor: {alive_creatures[0].creature.name} ===")

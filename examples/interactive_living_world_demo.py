@@ -99,8 +99,9 @@ def main():
         resource_spawn_rate=0.0  # No food in this demo
     )
     
-    # Create living world enhancer
+    # Create living world enhancer and connect to battle
     enhancer = LivingWorldBattleEnhancer(battle)
+    battle.enhancer = enhancer  # Connect enhancer to battle
     enhancer.on_battle_start(warriors)
     
     # Create renderers
