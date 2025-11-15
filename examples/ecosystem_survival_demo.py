@@ -50,10 +50,10 @@ def main():
     print()
     
     # Create diverse creatures with different traits
-    print("Creating ecosystem creatures...")
+    print("Creating ecosystem population...")
     print()
     
-    # Team 1: Foragers and Efficient creatures
+    # Create a mixed population with various traits
     forager = create_ecosystem_creature(
         "Forager Fox",
         [Trait(name="Forager"), Trait(name="Efficient Metabolism")],
@@ -78,7 +78,6 @@ def main():
     print(f"✓ {glutton.name} - Glutton")
     print(f"  Behavior: Fast hunger depletion, HP bonus when eating")
     
-    # Team 2: Aggressive and Voracious creatures
     aggressive_hunter = create_ecosystem_creature(
         "Hunter Wolf",
         [Trait(name="Aggressive"), Trait(name="Voracious")],
@@ -113,12 +112,10 @@ def main():
     print(f"Resource spawn rate: 0.2 per second (1 every 5 seconds)")
     print()
     
-    team1 = [forager, curious_explorer, glutton]
-    team2 = [aggressive_hunter, cautious_creature, wanderer]
+    population = [forager, curious_explorer, glutton, aggressive_hunter, cautious_creature, wanderer]
     
     battle = SpatialBattle(
-        team1,
-        team2,
+        population,
         arena_width=100.0,
         arena_height=100.0,
         resource_spawn_rate=0.2,  # Spawn resources slowly
@@ -148,18 +145,8 @@ def main():
             print(f"\n--- Time: {battle.current_time:.1f}s ---")
             print(f"Resources available: {len(battle.arena.resources)}")
             
-            print("\nTeam 1 Status:")
-            for creature in battle.player_creatures:
-                if creature.is_alive():
-                    status = "ALIVE"
-                    hp_pct = (creature.creature.stats.hp / creature.creature.stats.max_hp) * 100
-                    hunger_pct = (creature.creature.hunger / creature.creature.max_hunger) * 100
-                    print(f"  {creature.creature.name:20s} - {status:8s} | HP: {hp_pct:5.1f}% | Hunger: {hunger_pct:5.1f}%")
-                else:
-                    print(f"  {creature.creature.name:20s} - FAINTED")
-            
-            print("\nTeam 2 Status:")
-            for creature in battle.enemy_creatures:
+            print("\nPopulation Status:")
+            for creature in battle.creatures:
                 if creature.is_alive():
                     status = "ALIVE"
                     hp_pct = (creature.creature.stats.hp / creature.creature.stats.max_hp) * 100
@@ -177,24 +164,20 @@ def main():
     print()
     
     # Final statistics
-    alive_team1 = [c for c in battle.player_creatures if c.is_alive()]
-    alive_team2 = [c for c in battle.enemy_creatures if c.is_alive()]
+    alive_creatures = [c for c in battle.creatures if c.is_alive()]
     
     print(f"Final Time: {battle.current_time:.1f}s")
     print(f"Resources remaining: {len(battle.arena.resources)}")
     print()
     
     print("Final Status:")
-    print(f"  Team 1: {len(alive_team1)}/{len(battle.player_creatures)} survivors")
-    print(f"  Team 2: {len(alive_team2)}/{len(battle.enemy_creatures)} survivors")
+    print(f"  Population: {len(alive_creatures)}/{len(battle.creatures)} survivors")
     print()
     
-    if alive_team1 and not alive_team2:
-        print("🏆 Team 1 wins!")
-    elif alive_team2 and not alive_team1:
-        print("🏆 Team 2 wins!")
-    elif alive_team1 and alive_team2:
-        print("🤝 Both teams survived!")
+    if len(alive_creatures) == 1:
+        print(f"🏆 {alive_creatures[0].creature.name} is the last survivor!")
+    elif len(alive_creatures) > 1:
+        print(f"🤝 {len(alive_creatures)} creatures survived!")
     else:
         print("💀 All creatures perished!")
     

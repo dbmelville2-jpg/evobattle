@@ -144,8 +144,7 @@ class TestRendererCompatibility(unittest.TestCase):
         # Test helper methods
         try:
             ui.draw_battle_timer(screen, battle.current_time, (600, 30))
-            ui.draw_team_status(screen, "Team 1", 2, 2, (100, 30))
-            ui.draw_team_status(screen, "Team 2", 3, 3, (1100, 30))
+            ui.draw_population_status(screen, 5, 5, (100, 30))
         except AttributeError as e:
             self.fail(f"UIComponents helper method raised AttributeError: {e}")
 

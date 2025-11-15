@@ -45,8 +45,6 @@ class UIComponents:
         # Colors
         self.text_color = (255, 255, 255)
         self.panel_bg = (20, 20, 30, 180)
-        self.player_team_color = (80, 120, 255)
-        self.enemy_team_color = (255, 100, 100)
     
     def add_event_to_log(self, event: BattleEvent):
         """
@@ -118,91 +116,6 @@ class UIComponents:
         time_surface = self.text_font.render(time_text, True, self.text_color)
         time_rect = time_surface.get_rect(center=(screen_width // 2, 55))
         screen.blit(time_surface, time_rect)
-    
-    def _render_team_panel(
-        self,
-        screen: pygame.Surface,
-        battle: SpatialBattle,
-        team: str,
-        is_left: bool
-    ):
-        """Render a creature status panel."""
-        panel_width = 220
-        panel_height = 300
-        margin = 10
-        
-        if is_left:
-            panel_x = margin
-        else:
-            panel_x = screen.get_width() - panel_width - margin
-        
-        panel_y = 90
-        
-        # Panel background
-        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-        pygame.draw.rect(
-            panel_surface,
-            self.panel_bg,
-            pygame.Rect(0, 0, panel_width, panel_height),
-            border_radius=8
-        )
-        screen.blit(panel_surface, (panel_x, panel_y))
-        
-        # Header
-        header_text = "CREATURES" if is_left else "STATUS"
-        header_surface = self.text_font.render(header_text, True, self.text_color)
-        header_rect = header_surface.get_rect(centerx=panel_width // 2, top=10)
-        screen.blit(header_surface, (panel_x + header_rect.x, panel_y + header_rect.y))
-        
-        # Creature stats
-        y_offset = 40
-        alive_count = sum(1 for c in battle.creatures if c.is_alive())
-        
-        # Alive count
-        alive_text = f"Alive: {alive_count}/{len(battle.creatures)}"
-        alive_surface = self.small_font.render(alive_text, True, self.text_color)
-        screen.blit(alive_surface, (panel_x + 10, panel_y + y_offset))
-        y_offset += 25
-        
-        # Individual creature stats
-        # Determine which creatures to show based on panel side
-        creatures_to_show = battle.creatures[:len(battle.creatures)//2] if is_left else battle.creatures[len(battle.creatures)//2:]
-        
-        for creature in creatures_to_show:
-            if y_offset > panel_height - 30:
-                break  # Panel full
-            
-            status = "💚" if creature.is_alive() else "💀"
-            creature_text = f"{status} {creature.creature.name[:12]}"
-            text_surface = self.small_font.render(creature_text, True, self.text_color)
-            screen.blit(text_surface, (panel_x + 10, panel_y + y_offset))
-            
-            if creature.is_alive():
-                # HP bar
-                hp_percent = creature.creature.stats.hp / creature.creature.stats.max_hp
-                bar_width = 100
-                bar_x = panel_x + 120
-                bar_y = panel_y + y_offset + 2
-                
-                # Background
-                pygame.draw.rect(screen, (60, 60, 60), (bar_x, bar_y, bar_width, 12))
-                
-                # Fill
-                if hp_percent > 0.6:
-                    hp_color = (100, 255, 100)
-                elif hp_percent > 0.3:
-                    hp_color = (255, 255, 100)
-                else:
-                    hp_color = (255, 100, 100)
-                
-                fill_width = int(bar_width * hp_percent)
-                if fill_width > 0:
-                    pygame.draw.rect(screen, hp_color, (bar_x, bar_y, fill_width, 12))
-                
-                # Border
-                pygame.draw.rect(screen, (200, 200, 200), (bar_x, bar_y, bar_width, 12), 1)
-            
-            y_offset += 25
     
     def _render_strain_panel(
         self,
@@ -495,28 +408,26 @@ class UIComponents:
         time_rect = time_surface.get_rect(center=position)
         screen.blit(time_surface, time_rect)
     
-    def draw_team_status(
+    def draw_population_status(
         self,
         screen: pygame.Surface,
-        team_name: str,
         alive_count: int,
         total_count: int,
         position: tuple
     ):
         """
-        Draw team status at the specified position.
+        Draw population status at the specified position.
         
-        Helper method for simple team status display without full UI rendering.
+        Helper method for simple population status display without full UI rendering.
         
         Args:
             screen: Pygame surface to draw on
-            team_name: Name of the team
             alive_count: Number of alive creatures
-            total_count: Total number of creatures in team
+            total_count: Total number of creatures in population
             position: (x, y) position for centered status
         """
-        status_text = f"{team_name}: {alive_count}/{total_count}"
-        color = self.player_team_color if "1" in team_name or "Player" in team_name else self.enemy_team_color
+        status_text = f"Population: {alive_count}/{total_count}"
+        color = (100, 255, 150)  # Green for population
         status_surface = self.text_font.render(status_text, True, color)
         status_rect = status_surface.get_rect(center=position)
         screen.blit(status_surface, status_rect)
