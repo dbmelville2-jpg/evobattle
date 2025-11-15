@@ -347,9 +347,10 @@ class SpatialBattle:
             self._end_battle()
             return
         
-        # Tick hunger for all alive creatures
+        # Tick hunger and age for all alive creatures
         for creature in alive_creatures:
             creature.creature.tick_hunger(delta_time)
+            creature.creature.tick_age(delta_time)
             # Check if creature starved
             if creature.creature.hunger <= 0 and creature.is_alive():
                 self.death_count += 1
@@ -420,8 +421,9 @@ class SpatialBattle:
                 current_distance = creature.spatial.distance_to(creature.target.spatial)
                 if current_distance > creature.target_retention_distance:
                     # Look for a closer target
-                    if other_creatures:
-                        closest_distance = min(creature.spatial.distance_to(c.spatial) for c in other_creatures if c != creature.target)
+                    other_non_target = [c for c in other_creatures if c != creature.target]
+                    if other_non_target:
+                        closest_distance = min(creature.spatial.distance_to(c.spatial) for c in other_non_target)
                         # Only retarget if significantly closer (20% threshold)
                         if closest_distance < current_distance * 0.8:
                             should_retarget = True
@@ -684,7 +686,8 @@ class SpatialBattle:
             return
         
         # Find potential breeding pairs (creatures close to each other)
-        breeding_range = 10.0  # Distance within which creatures can breed
+        # Breeding range scales with arena size (20% of smaller dimension)
+        breeding_range = min(self.arena.width, self.arena.height) * 0.3
         
         for i, creature1 in enumerate(alive_creatures):
             # Skip if creature cannot breed

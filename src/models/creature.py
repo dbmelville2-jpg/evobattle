@@ -380,7 +380,7 @@ class Creature:
             self.mature and 
             self.is_alive() and 
             self.stats.hp > 0.5 * self.stats.max_hp and 
-            self.hunger > 80
+            self.hunger > 70
         )
     
     def tick_age(self, delta_time: float):
