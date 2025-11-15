@@ -512,7 +512,7 @@ class SpatialBattle:
         # Choose ability
         usable_abilities = [
             a for a in attacker.creature.abilities
-            if a.can_use(attacker.creature.stats, attacker.creature.energy)
+            if a is not None and a.can_use(attacker.creature.stats, attacker.creature.energy)
         ]
         
         if usable_abilities:

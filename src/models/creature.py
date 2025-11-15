@@ -274,7 +274,8 @@ class Creature:
     
     def add_ability(self, ability: Ability):
         """Add an ability to this creature."""
-        self.abilities.append(ability)
+        if ability is not None:
+            self.abilities.append(ability)
     
     def remove_ability(self, ability_name: str) -> bool:
         """

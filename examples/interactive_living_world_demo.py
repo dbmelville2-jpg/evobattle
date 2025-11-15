@@ -53,7 +53,9 @@ def create_warrior(name: str, level: int = 5, traits: list = None) -> Creature:
     )
     
     creature.add_ability(create_ability('tackle'))
-    creature.add_ability(create_ability('slash'))
+    ability = create_ability('quick_strike')
+    if ability:
+        creature.add_ability(ability)
     
     return creature
 
