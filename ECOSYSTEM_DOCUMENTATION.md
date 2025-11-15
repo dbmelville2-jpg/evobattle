@@ -85,11 +85,10 @@ creature.eat(food_value: int = 40) -> int
 
 ### SpatialBattle Class
 
-#### New Parameters
+#### Constructor Parameters
 ```python
 SpatialBattle(
-    player_team: List[Creature],
-    enemy_team: List[Creature],
+    creatures: List[Creature],
     arena_width: float = 100.0,
     arena_height: float = 100.0,
     random_seed: Optional[int] = None,
@@ -97,6 +96,8 @@ SpatialBattle(
     initial_resources: int = 5          # Starting food count
 )
 ```
+
+**Note:** For backward compatibility, you can still pass two lists (old API), but the new API uses a single population list.
 
 ### BehaviorType Enum
 
