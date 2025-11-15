@@ -478,3 +478,45 @@ class UIComponents:
         for i, control in enumerate(controls):
             text_surface = self.small_font.render(control, True, (180, 180, 180))
             screen.blit(text_surface, (x, y + i * 18))
+    
+    def draw_battle_timer(self, screen: pygame.Surface, time: float, position: tuple):
+        """
+        Draw battle timer at the specified position.
+        
+        Helper method for simple timer display without full UI rendering.
+        
+        Args:
+            screen: Pygame surface to draw on
+            time: Current battle time in seconds
+            position: (x, y) position for centered timer
+        """
+        time_text = f"Time: {time:.1f}s"
+        time_surface = self.text_font.render(time_text, True, self.text_color)
+        time_rect = time_surface.get_rect(center=position)
+        screen.blit(time_surface, time_rect)
+    
+    def draw_team_status(
+        self,
+        screen: pygame.Surface,
+        team_name: str,
+        alive_count: int,
+        total_count: int,
+        position: tuple
+    ):
+        """
+        Draw team status at the specified position.
+        
+        Helper method for simple team status display without full UI rendering.
+        
+        Args:
+            screen: Pygame surface to draw on
+            team_name: Name of the team
+            alive_count: Number of alive creatures
+            total_count: Total number of creatures in team
+            position: (x, y) position for centered status
+        """
+        status_text = f"{team_name}: {alive_count}/{total_count}"
+        color = self.player_team_color if "1" in team_name or "Player" in team_name else self.enemy_team_color
+        status_surface = self.text_font.render(status_text, True, color)
+        status_rect = status_surface.get_rect(center=position)
+        screen.blit(status_surface, status_rect)
