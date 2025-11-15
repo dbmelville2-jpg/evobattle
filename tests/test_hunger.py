@@ -6,6 +6,7 @@ import unittest
 from src.models.creature import Creature, CreatureType
 from src.models.stats import Stats
 from src.models.trait import Trait
+from src.models.ecosystem_traits import HERBIVORE, CARNIVORE, OMNIVORE
 
 
 class TestHungerSystem(unittest.TestCase):
@@ -130,6 +131,144 @@ class TestHungerSystem(unittest.TestCase):
         restored = Creature.from_dict(data)
         self.assertEqual(restored.hunger, 75)
         self.assertEqual(restored.max_hunger, 100)
+
+
+class TestDietaryTraits(unittest.TestCase):
+    """Test cases for dietary traits system."""
+    
+    def test_herbivore_can_eat_plants(self):
+        """Test that herbivores can eat plant resources."""
+        herbivore = Creature(
+            name="Herbivore",
+            traits=[HERBIVORE],
+            hunger=50
+        )
+        
+        hunger_restored = herbivore.eat(40, food_type="plant")
+        
+        self.assertEqual(hunger_restored, 40)
+        self.assertEqual(herbivore.hunger, 90)
+    
+    def test_herbivore_cannot_eat_creatures(self):
+        """Test that herbivores cannot eat other creatures."""
+        herbivore = Creature(
+            name="Herbivore",
+            traits=[HERBIVORE],
+            hunger=50
+        )
+        
+        hunger_restored = herbivore.eat(50, food_type="creature")
+        
+        self.assertEqual(hunger_restored, 0)
+        self.assertEqual(herbivore.hunger, 50)  # Unchanged
+    
+    def test_carnivore_can_eat_creatures(self):
+        """Test that carnivores can eat other creatures."""
+        carnivore = Creature(
+            name="Carnivore",
+            traits=[CARNIVORE],
+            hunger=50
+        )
+        
+        hunger_restored = carnivore.eat(50, food_type="creature")
+        
+        self.assertEqual(hunger_restored, 50)
+        self.assertEqual(carnivore.hunger, 100)
+    
+    def test_carnivore_cannot_eat_plants(self):
+        """Test that carnivores cannot eat plant resources."""
+        carnivore = Creature(
+            name="Carnivore",
+            traits=[CARNIVORE],
+            hunger=50
+        )
+        
+        hunger_restored = carnivore.eat(40, food_type="plant")
+        
+        self.assertEqual(hunger_restored, 0)
+        self.assertEqual(carnivore.hunger, 50)  # Unchanged
+    
+    def test_carnivore_has_attack_bonus(self):
+        """Test that carnivores have increased attack stats."""
+        normal = Creature(name="Normal", level=5)
+        carnivore = Creature(
+            name="Carnivore",
+            traits=[CARNIVORE],  # Use predefined CARNIVORE trait with 1.2 modifier
+            level=5
+        )
+        
+        # Carnivore should have 20% more attack
+        self.assertGreater(carnivore.stats.attack, normal.stats.attack)
+    
+    def test_omnivore_can_eat_plants(self):
+        """Test that omnivores can eat plant resources."""
+        omnivore = Creature(
+            name="Omnivore",
+            traits=[OMNIVORE],
+            hunger=50
+        )
+        
+        hunger_restored = omnivore.eat(40, food_type="plant")
+        
+        self.assertEqual(hunger_restored, 40)
+        self.assertEqual(omnivore.hunger, 90)
+    
+    def test_omnivore_can_eat_creatures(self):
+        """Test that omnivores can eat other creatures."""
+        omnivore = Creature(
+            name="Omnivore",
+            traits=[OMNIVORE],
+            hunger=50
+        )
+        
+        hunger_restored = omnivore.eat(50, food_type="creature")
+        
+        self.assertEqual(hunger_restored, 50)
+        self.assertEqual(omnivore.hunger, 100)
+    
+    def test_no_dietary_trait_can_eat_both(self):
+        """Test that creatures without dietary traits can eat both food types."""
+        creature = Creature(name="Normal", hunger=50)
+        
+        # Can eat plants
+        hunger_restored_plant = creature.eat(20, food_type="plant")
+        self.assertEqual(hunger_restored_plant, 20)
+        self.assertEqual(creature.hunger, 70)
+        
+        # Can eat creatures
+        hunger_restored_creature = creature.eat(25, food_type="creature")
+        self.assertEqual(hunger_restored_creature, 25)
+        self.assertEqual(creature.hunger, 95)
+    
+    def test_can_eat_food_type_method_herbivore(self):
+        """Test can_eat_food_type method for herbivores."""
+        herbivore = Creature(
+            name="Herbivore",
+            traits=[HERBIVORE]
+        )
+        
+        self.assertTrue(herbivore.can_eat_food_type("plant"))
+        self.assertFalse(herbivore.can_eat_food_type("creature"))
+    
+    def test_can_eat_food_type_method_carnivore(self):
+        """Test can_eat_food_type method for carnivores."""
+        carnivore = Creature(
+            name="Carnivore",
+            traits=[CARNIVORE]
+        )
+        
+        self.assertFalse(carnivore.can_eat_food_type("plant"))
+        self.assertTrue(carnivore.can_eat_food_type("creature"))
+    
+    def test_can_eat_food_type_method_omnivore(self):
+        """Test can_eat_food_type method for omnivores."""
+        omnivore = Creature(
+            name="Omnivore",
+            traits=[OMNIVORE]
+        )
+        
+        self.assertTrue(omnivore.can_eat_food_type("plant"))
+        self.assertTrue(omnivore.can_eat_food_type("creature"))
 
 
 if __name__ == '__main__':

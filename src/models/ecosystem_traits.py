@@ -149,6 +149,33 @@ FRAIL = Trait(
 
 
 # ===========================
+# DIETARY TRAITS
+# ===========================
+
+HERBIVORE = Trait(
+    name="Herbivore",
+    description="Only eats plant resources, cannot consume other creatures",
+    trait_type="dietary",
+    rarity="common"
+)
+
+CARNIVORE = Trait(
+    name="Carnivore",
+    description="Only eats other creatures, cannot eat plant resources",
+    trait_type="dietary",
+    strength_modifier=1.2,  # 20% attack bonus
+    rarity="uncommon"
+)
+
+OMNIVORE = Trait(
+    name="Omnivore",
+    description="Can eat both plant resources and other creatures",
+    trait_type="dietary",
+    rarity="common"
+)
+
+
+# ===========================
 # TRAIT COLLECTIONS
 # ===========================
 
@@ -179,11 +206,18 @@ SURVIVAL_TRAITS = [
     FRAIL
 ]
 
+DIETARY_TRAITS = [
+    HERBIVORE,
+    CARNIVORE,
+    OMNIVORE
+]
+
 ALL_ECOSYSTEM_TRAITS = (
     METABOLIC_TRAITS +
     BEHAVIORAL_TRAITS +
     PERSONALITY_TRAITS +
-    SURVIVAL_TRAITS
+    SURVIVAL_TRAITS +
+    DIETARY_TRAITS
 )
 
 
@@ -221,3 +255,9 @@ def get_random_personality_trait():
     """Get a random personality trait."""
     import random
     return random.choice(PERSONALITY_TRAITS)
+
+
+def get_random_dietary_trait():
+    """Get a random dietary trait."""
+    import random
+    return random.choice(DIETARY_TRAITS)
