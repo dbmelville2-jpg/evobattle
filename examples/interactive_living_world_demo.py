@@ -181,7 +181,7 @@ def main():
         window.screen.fill((20, 20, 30))
         
         # Render arena and creatures
-        arena_renderer.render(window.screen)
+        arena_renderer.render(window.screen, battle)
         
         for bc in battle.creatures:
             creature_renderer.render(
