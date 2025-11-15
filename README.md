@@ -97,15 +97,17 @@ This project is developed by three specialist agents working in coordination:
 
 ### Running Examples
 
+All examples should be run from the project root directory using Python's module syntax:
+
 ```bash
 # Battle system examples
-python3 examples/battle_system_example.py
+python3 -m examples.battle_system_example
 
 # Core models examples
-python3 examples/core_models_example.py
+python3 -m examples.core_models_example
 
 # Spatial battle examples
-python3 examples/spatial_battle_example.py
+python3 -m examples.spatial_battle_example
 
 # Ecosystem survival simulation (text-based)
 python3 -m examples.ecosystem_survival_demo
@@ -115,6 +117,12 @@ python3 -m examples.ecosystem_pygame_demo
 
 # Genetic strain evolution demo (shows lineage system)
 python3 -m examples.genetic_strain_demo
+
+# Real-time battle example
+python3 -m examples.realtime_battle_example
+
+# Pygame rendering demo
+python3 -m examples.pygame_rendering_demo
 ```
 
 ### Pygame Rendering Demo
@@ -123,7 +131,7 @@ Watch battles in real-time with full visual rendering:
 
 ```bash
 # Run the Pygame visualization demo
-python3 examples/pygame_rendering_demo.py
+python3 -m examples.pygame_rendering_demo
 ```
 
 **Features:**

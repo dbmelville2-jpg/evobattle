@@ -4,7 +4,7 @@ Predefined metabolic and personality traits for the ecosystem survival system.
 These traits affect hunger depletion, foraging behavior, and movement patterns.
 """
 
-from src.models.trait import Trait
+from .trait import Trait
 
 
 # ===========================

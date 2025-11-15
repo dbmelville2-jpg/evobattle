@@ -1,12 +1,14 @@
 """
-Battle System Example - Demonstrates the core battle mechanics.
+Battle System Example - Demonstrates the turn-based battle mechanics.
 
-This example shows how to use the battle system including:
+This example shows how to use the turn-based battle system including:
 - Creating creatures with abilities
 - Simulating battles
 - Type effectiveness
 - Status effects
 - Battle logging
+
+Note: This uses the turn-based battle system for demonstration.
 """
 
 import sys
@@ -19,7 +21,7 @@ from src.models.stats import Stats, StatGrowth
 from src.models.ability import create_ability, Ability, AbilityType
 from src.models.trait import Trait
 from src.models.status_effect import create_status_effect
-from src.systems.battle import Battle
+from src.systems.battle_turnbased_backup import Battle
 
 
 def create_fire_dragon():

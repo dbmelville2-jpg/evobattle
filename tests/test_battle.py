@@ -1,5 +1,7 @@
 """
-Unit tests for Battle system.
+Unit tests for Battle system (turn-based).
+
+Note: These tests use the turn-based battle system from battle_turnbased_backup.py
 """
 
 import unittest
@@ -7,7 +9,7 @@ from src.models.creature import Creature, CreatureType
 from src.models.stats import Stats, StatGrowth
 from src.models.ability import Ability, AbilityType, create_ability
 from src.models.status_effect import StatusEffect, StatusEffectType
-from src.systems.battle import Battle, BattlePhase, BattleState, BattleAction, BattleEvent, BattleEventType
+from src.systems.battle_turnbased_backup import Battle, BattlePhase, BattleState, BattleAction, BattleEvent, BattleEventType
 
 
 class TestBattleState(unittest.TestCase):

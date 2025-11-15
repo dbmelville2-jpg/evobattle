@@ -66,6 +66,107 @@ class BattleEvent:
         return f"BattleEvent({self.event_type.value}: {self.message})"
 
 
+class BattlePhase(Enum):
+    """Phases of a battle turn (for turn-based combat)."""
+    START = "start"
+    TURN_SELECTION = "turn_selection"
+    ACTION = "action"
+    END_OF_TURN = "end_of_turn"
+    BATTLE_END = "battle_end"
+
+
+class BattleAction:
+    """
+    Represents an action taken by a creature in battle.
+    
+    Attributes:
+        creature: The creature taking the action
+        action_type: Type of action (ability, item, switch, flee)
+        target: The target of the action
+        ability: The ability being used (if applicable)
+    """
+    
+    def __init__(
+        self,
+        creature: Creature,
+        action_type: str = "ability",
+        target: Optional[Creature] = None,
+        ability: Optional[Ability] = None
+    ):
+        self.creature = creature
+        self.action_type = action_type
+        self.target = target
+        self.ability = ability
+
+
+class BattleState:
+    """
+    Manages the state of an active battle (for turn-based combat).
+    
+    Tracks participants, turn order, active effects, and battle progress.
+    
+    Attributes:
+        player_team: List of creatures on player's team
+        enemy_team: List of creatures on enemy's team
+        current_turn: Current turn number
+        phase: Current battle phase
+        weather: Current weather condition affecting battle
+        terrain: Current terrain affecting battle
+        events: List of battle events for visualization
+    """
+    
+    def __init__(
+        self,
+        player_team: List[Creature],
+        enemy_team: List[Creature]
+    ):
+        self.player_team = player_team
+        self.enemy_team = enemy_team
+        self.current_turn = 0
+        self.phase = BattlePhase.START
+        self.weather = None
+        self.terrain = None
+        self.status_effects: Dict[str, List[StatusEffect]] = {}
+        self.events: List[BattleEvent] = []
+        
+        # Initialize status effects for all creatures
+        for creature in player_team + enemy_team:
+            self.status_effects[creature.creature_id] = []
+    
+    def get_active_player(self) -> Optional[Creature]:
+        """Get the current active creature for player team."""
+        for creature in self.player_team:
+            if creature.is_alive():
+                return creature
+        return None
+    
+    def get_active_enemy(self) -> Optional[Creature]:
+        """Get the current active creature for enemy team."""
+        for creature in self.enemy_team:
+            if creature.is_alive():
+                return creature
+        return None
+    
+    def is_battle_over(self) -> bool:
+        """Check if battle has ended."""
+        player_alive = any(c.is_alive() for c in self.player_team)
+        enemy_alive = any(c.is_alive() for c in self.enemy_team)
+        return not (player_alive and enemy_alive)
+    
+    def get_winner(self) -> Optional[str]:
+        """
+        Determine the winner of the battle.
+        
+        Returns:
+            'player', 'enemy', or None if battle not over
+        """
+        if not self.is_battle_over():
+            return None
+        
+        player_alive = any(c.is_alive() for c in self.player_team)
+        return 'player' if player_alive else 'enemy'
+
+
 class BattleCreature:
     """
     Wrapper for Creature with spatial properties and behavior.

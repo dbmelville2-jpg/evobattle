@@ -1,8 +1,10 @@
 """
-Real-Time Battle Example - Watch creatures fight in real-time!
+Real-Time Battle Example - Watch turn-based battles in real-time!
 
-This example demonstrates the real-time battle system with visual feedback
+This example demonstrates the turn-based battle system with visual feedback
 and animated battles that you can watch unfold step by step.
+
+Note: This uses the turn-based battle system for demonstration.
 """
 
 import sys
@@ -14,7 +16,7 @@ from src.models.creature import Creature, CreatureType
 from src.models.stats import Stats, StatGrowth
 from src.models.ability import create_ability
 from src.models.trait import Trait
-from src.systems.battle import Battle, BattleEvent, BattleEventType
+from src.systems.battle_turnbased_backup import Battle, BattleEvent, BattleEventType
 
 
 def clear_screen():
