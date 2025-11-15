@@ -64,6 +64,27 @@ Predefined traits in `src/models/ecosystem_traits.py`:
 - **Hardy**: Tough and resilient, +20% defense, uncommon
 - **Frail**: Vulnerable, -20% defense, -10% strength, common
 
+#### Dietary Traits
+- **Herbivore**: Only eats plant resources, cannot consume creatures, common
+- **Carnivore**: Only eats other creatures, cannot eat plants, +20% attack bonus, uncommon
+- **Omnivore**: Can eat both plant resources and other creatures, common
+
+### 5. Food Chain System
+
+The dietary trait system creates a food chain dynamic where creatures have different feeding strategies:
+
+- **Herbivores**: Must survive by collecting plant resources from the arena. They cannot eat defeated creatures, making them dependent on resource availability
+- **Carnivores**: Must hunt and defeat other creatures to survive. They gain bonus attack power (+20%) but cannot eat plant resources
+- **Omnivores**: Have the most flexible diet, able to eat both plants and defeated creatures
+- **No Dietary Trait**: Creatures without a dietary trait can eat both food types (behaves like omnivore)
+
+#### Corpse Consumption
+When a creature is defeated in combat:
+1. The killer gets first priority to consume the corpse (if carnivore/omnivore)
+2. Nearby carnivores and omnivores within 5 units can also consume it
+3. Corpses provide 50 hunger points (more than plant resources)
+4. A `CREATURE_CONSUMED` event is emitted for tracking
+
 ## API Reference
 
 ### Creature Class
@@ -79,8 +100,28 @@ creature.max_hunger: int      # Maximum hunger (default: 100)
 creature.tick_hunger(delta_time: float) -> None
     """Deplete hunger over time based on metabolic traits."""
 
-creature.eat(food_value: int = 40) -> int
-    """Consume food to restore hunger. Returns amount restored."""
+creature.eat(food_value: int = 40, food_type: str = "plant") -> int
+    """
+    Consume food to restore hunger. Returns amount restored.
+    
+    Args:
+        food_value: Amount of hunger to restore
+        food_type: Type of food ("plant" or "creature")
+    
+    Returns:
+        Actual hunger restored (0 if dietary restrictions prevent eating)
+    """
+
+creature.can_eat_food_type(food_type: str) -> bool
+    """
+    Check if creature can eat a specific food type based on dietary traits.
+    
+    Args:
+        food_type: Type of food ("plant" or "creature")
+    
+    Returns:
+        True if creature can eat this food type
+    """
 ```
 
 ### SpatialBattle Class
@@ -263,9 +304,11 @@ Example combinations:
 
 ### Event System
 
-The hunger system integrates with the existing event system:
+The hunger and dietary systems integrate with the existing event system:
 
-- `BattleEventType.RESOURCE_COLLECTED`: Fired when creature eats food
+- `BattleEventType.RESOURCE_COLLECTED`: Fired when creature eats plant food
+- `BattleEventType.CREATURE_CONSUMED`: Fired when creature consumes a defeated creature
+- `BattleEventType.CREATURE_DEATH`: Fired when creature is defeated (triggers corpse consumption logic)
 - `BattleEventType.CREATURE_FAINT`: Includes starvation deaths
 
 ## Performance

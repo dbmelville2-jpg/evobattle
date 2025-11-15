@@ -6,6 +6,8 @@ Demonstrates the new survival features:
 - Resource gathering and foraging behavior
 - Trait-driven wandering
 - Creatures competing for resources
+- Dietary traits: Herbivore, Carnivore, Omnivore
+- Food chain dynamics
 """
 
 from src.models.creature import Creature, CreatureType
@@ -13,6 +15,7 @@ from src.models.stats import Stats, StatGrowth
 from src.models.trait import Trait
 from src.models.ability import create_ability
 from src.systems.battle_spatial import SpatialBattle
+from src.models.ecosystem_traits import HERBIVORE, CARNIVORE, OMNIVORE, EFFICIENT_METABOLISM, FORAGER, AGGRESSIVE
 
 
 def create_ecosystem_creature(name: str, traits: list, level: int = 5) -> Creature:
@@ -102,6 +105,34 @@ def main():
     print(f"✓ {wanderer.name} - Wanderer + Efficient Metabolism")
     print(f"  Behavior: Random exploration, slow hunger")
     
+    # NEW: Dietary trait creatures
+    print()
+    print("--- Dietary Trait Examples (Food Chain System) ---")
+    
+    herbivore = create_ecosystem_creature(
+        "Gentle Deer",
+        [HERBIVORE, FORAGER],
+        level=5
+    )
+    print(f"✓ {herbivore.name} - Herbivore + Forager")
+    print(f"  Diet: Plant resources only, seeks food actively")
+    
+    carnivore = create_ecosystem_creature(
+        "Apex Predator",
+        [CARNIVORE, AGGRESSIVE],
+        level=6
+    )
+    print(f"✓ {carnivore.name} - Carnivore + Aggressive")
+    print(f"  Diet: Defeated creatures only, +20% attack, aggressive hunter")
+    
+    omnivore = create_ecosystem_creature(
+        "Versatile Raccoon",
+        [OMNIVORE, EFFICIENT_METABOLISM],
+        level=5
+    )
+    print(f"✓ {omnivore.name} - Omnivore + Efficient Metabolism")
+    print(f"  Diet: Both plants and creatures, slow hunger")
+    
     print()
     print("-" * 70)
     
@@ -112,7 +143,8 @@ def main():
     print(f"Resource spawn rate: 0.2 per second (1 every 5 seconds)")
     print()
     
-    population = [forager, curious_explorer, glutton, aggressive_hunter, cautious_creature, wanderer]
+    population = [forager, curious_explorer, glutton, aggressive_hunter, cautious_creature, wanderer,
+                  herbivore, carnivore, omnivore]
     
     battle = SpatialBattle(
         population,
