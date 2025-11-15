@@ -10,6 +10,10 @@ import random
 from .stats import Stats, StatModifier, StatGrowth
 from .ability import Ability
 from .trait import Trait
+from .history import CreatureHistory
+from .skills import SkillManager
+from .personality import PersonalityProfile
+from .relationships import RelationshipManager
 
 
 class CreatureType:
@@ -190,6 +194,12 @@ class Creature:
         self.max_energy = max_energy
         self.hunger = hunger
         self.max_hunger = max_hunger
+        
+        # Living World Systems
+        self.history = CreatureHistory(self.creature_id, self.name)
+        self.skills = SkillManager()
+        self.personality = PersonalityProfile.random()
+        self.relationships = RelationshipManager(self.creature_id)
         
         # Recalculate stats with trait modifiers applied
         if self.traits:
