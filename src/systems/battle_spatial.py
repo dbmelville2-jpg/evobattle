@@ -347,11 +347,14 @@ class SpatialBattle:
             self._end_battle()
             return
         
-        # Tick hunger for all alive creatures
+        # Tick hunger and age for all alive creatures
         for creature in alive_creatures:
             creature.creature.tick_hunger(delta_time)
-            # Check if creature starved
+            creature.creature.tick_age(delta_time)
+            # Check if creature starved - kill it if hunger depleted
             if creature.creature.hunger <= 0 and creature.is_alive():
+                # Kill the creature by setting HP to 0
+                creature.creature.stats.hp = 0
                 self.death_count += 1
                 self._log(f"{creature.creature.name} starved to death!")
                 self._emit_event(BattleEvent(
@@ -420,8 +423,9 @@ class SpatialBattle:
                 current_distance = creature.spatial.distance_to(creature.target.spatial)
                 if current_distance > creature.target_retention_distance:
                     # Look for a closer target
-                    if other_creatures:
-                        closest_distance = min(creature.spatial.distance_to(c.spatial) for c in other_creatures if c != creature.target)
+                    other_non_target = [c for c in other_creatures if c != creature.target]
+                    if other_non_target:
+                        closest_distance = min(creature.spatial.distance_to(c.spatial) for c in other_non_target)
                         # Only retarget if significantly closer (20% threshold)
                         if closest_distance < current_distance * 0.8:
                             should_retarget = True
@@ -565,6 +569,7 @@ class SpatialBattle:
         # Apply damage or effects
         if ability.ability_type in [AbilityType.PHYSICAL, AbilityType.SPECIAL]:
             damage = self._calculate_damage(attacker.creature, defender.creature, ability)
+            was_alive_before_damage = defender.is_alive()
             actual_damage = defender.creature.stats.take_damage(damage)
             self._log(f"{defender.creature.name} takes {actual_damage} damage! (HP: {defender.creature.stats.hp}/{defender.creature.stats.max_hp})")
             
@@ -578,7 +583,8 @@ class SpatialBattle:
                 data={'remaining_hp': defender.creature.stats.hp, 'max_hp': defender.creature.stats.max_hp}
             ))
             
-            if not defender.is_alive():
+            # Only count death if creature was alive before this attack
+            if was_alive_before_damage and not defender.is_alive():
                 self.death_count += 1
                 self._emit_event(BattleEvent(
                     event_type=BattleEventType.CREATURE_DEATH,
@@ -684,7 +690,8 @@ class SpatialBattle:
             return
         
         # Find potential breeding pairs (creatures close to each other)
-        breeding_range = 10.0  # Distance within which creatures can breed
+        # Breeding range scales with arena size (20% of smaller dimension)
+        breeding_range = min(self.arena.width, self.arena.height) * 0.3
         
         for i, creature1 in enumerate(alive_creatures):
             # Skip if creature cannot breed
