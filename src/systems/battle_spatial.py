@@ -1,7 +1,7 @@
 """
 Spatial Real-Time Battle System - Handles real-time 2D combat.
 
-Creatures move and fight in a 2D arena with positioning, proximity-based
+Creatures move and fight in a 2D arena with positioning, proximity-based        
 targeting, and continuous time updates. Traits affect behavior, movement,
 and combat decisions.
 
@@ -14,6 +14,8 @@ Enhanced with:
 - Environmental simulation (weather, terrain, day/night, hazards)
 """
 
+from src.models.attention import StimulusType
+from src.models.behavior import BehaviorType
 from typing import List, Optional, Dict, Callable, Tuple, Any
 from enum import Enum
 from functools import lru_cache
@@ -36,6 +38,7 @@ from ..models.environment import Environment, EnvironmentalHazard, HazardType
 from ..models.attention import AttentionManager, StimulusType, create_attention_manager_from_traits
 from .breeding import Breeding
 from .grass_growth_system import GrassGrowthSystem
+from src.models.relationship_metrics import CooperativeBehaviorSystem, DecisionContext
 
 
 class BattleEventType(Enum):
@@ -205,7 +208,11 @@ class SpatialBattle:
     Creatures move, target, and fight based on proximity and traits.
     Uses continuous time updates rather than turns.
     """
-    
+
+    # Set to True to enable internal debug _log entries that are for development only.
+    # Default is False to silence debug noise in normal runs.
+    DEBUG: bool = False
+
     # Type effectiveness chart (reused from turn-based system)
     TYPE_EFFECTIVENESS = {
         'fire': {'grass': 2.0, 'water': 0.5, 'ice': 2.0},
@@ -777,12 +784,10 @@ class SpatialBattle:
                     creature.creature.relationships.has_relationship(
                         ally.creature.creature_id,
                         RelationshipType.PARENT
-                    ) or
-                    creature.creature.relationships.has_relationship(
+                    ) or creature.creature.relationships.has_relationship(
                         ally.creature.creature_id,
                         RelationshipType.CHILD
-                    ) or
-                    creature.creature.relationships.has_relationship(
+                    ) or creature.creature.relationships.has_relationship(
                         ally.creature.creature_id,
                         RelationshipType.SIBLING
                     )
@@ -804,7 +809,20 @@ class SpatialBattle:
                     self.combat_config.max_chase_distance,
                     exclude={creature}
                 )
-                
+
+                # DEBUG: log what the spatial query returned
+                try:
+                    candidate_info = ", ".join(f"{t.creature.name}[id={id(t)}]" for t in potential_targets)
+                except Exception:
+                    candidate_info = str([id(t) for t in potential_targets])
+                if self.DEBUG:
+                    self._log(f"[debug:potential_targets] attacker={creature.creature.name}[id={id(creature)}] -> {candidate_info}")
+
+                # If the query accidentally returned the attacker, log it explicitly
+                for t in potential_targets:
+                    if t == creature and self.DEBUG:
+                        self._log(f"[debug:potential_targets:self_in_list] attacker returned in own query: {creature.creature.name} id={id(creature)}")
+
                 # Filter out allies (don't target family or friends) and self
                 filtered_targets = []
                 for target in potential_targets:
@@ -815,7 +833,18 @@ class SpatialBattle:
                     if self._is_ally(creature, target):
                         continue  # Skip allies
                     filtered_targets.append(target)
-                
+
+                # DEBUG: log filtered target list
+                try:
+                    filtered_info = ", ".join(f"{t.creature.name}[id={id(t)}]" for t in filtered_targets)
+                except Exception:
+                    filtered_info = str([id(t) for t in filtered_targets])
+                if self.DEBUG:
+                    self._log(f"[debug:filtered_targets] attacker={creature.creature.name}[id={id(creature)}] -> {filtered_info}")
+
+                # Ensure selected_target is defined even if no filtered targets found
+                selected_target = None
+
                 # Select best target using new system
                 if filtered_targets:
                     selected_target = CombatTargetingSystem.select_target(
@@ -823,12 +852,220 @@ class SpatialBattle:
                         filtered_targets,
                         context
                     )
-                    
-                    # Safety check: Never target self
-                    if selected_target and selected_target != creature:
-                        creature.target = selected_target
-                        creature.last_retarget_time = self.current_time
-            
+
+                # DEBUG: log selected target (if any)
+                try:
+                    sel_name = selected_target.creature.name if selected_target else None
+                    sel_id = id(selected_target) if selected_target else None
+                except Exception:
+                    sel_name = None
+                    sel_id = None
+                if self.DEBUG:
+                    self._log(f"[debug:selected_target] attacker={creature.creature.name}[id={id(creature)}] selected={sel_name} id={sel_id}")
+
+                # Determine new target (none if invalid or self)
+                new_target = selected_target if (selected_target and selected_target != creature) else None
+
+                # Only update if the target actually changed
+                if creature.target is not new_target:
+                    creature.target = new_target
+                    creature.last_retarget_time = self.current_time
+
+                # If we cleared the target, try relationship-driven fallbacks (3 → 2 → 1),
+                # then finally fall back to attention-priorities / exploring.
+                if creature.target is None:
+                    try:
+                        # Ensure attention exists
+                        if not getattr(creature, "attention", None):
+                            creature.attention = create_attention_manager_from_traits(
+                                getattr(creature.creature, "traits", []) or []
+                            )
+
+                        # -----------------------------------------------------------------
+                        # 3) Try: Join an ally's fight using CooperativeBehaviorSystem
+                        # -----------------------------------------------------------------
+                        from src.models.relationship_metrics import (
+                            CooperativeBehaviorSystem,
+                            DecisionContext,
+                            AgentTraits,
+                            AgentSocialState,
+                            RelationshipMetrics
+                        )
+
+                        coop = CooperativeBehaviorSystem()
+                        joined = False
+
+                        for ally in nearby_allies_list:
+                            # ally is a BattleCreature; check if they're actively fighting
+                            if ally.target and ally.target.is_alive():
+                                rel = creature.creature.relationships.get_relationship(ally.creature.creature_id)
+                                metrics = rel.metrics if rel else RelationshipMetrics()
+
+                                # Build minimal trait/state inputs (fall back to defaults if not present)
+                                actor_traits = getattr(creature.creature, "social_traits", None) or AgentTraits()
+                                target_traits = getattr(ally.creature, "social_traits", None) or AgentTraits()
+
+                                actor_state = AgentSocialState(
+                                    current_pack=[],
+                                    current_alpha=None,
+                                    hunger_level=max(0.0, min(1.0, getattr(creature.creature, "hunger", 1.0) / max(1, getattr(creature.creature, "max_hunger", 1)))),
+                                    health_level=max(0.0, min(1.0, creature.creature.stats.hp / max(1, creature.creature.stats.max_hp))),
+                                    in_combat=False,
+                                    threatened=False
+                                )
+                                target_state = AgentSocialState(
+                                    current_pack=[],
+                                    current_alpha=None,
+                                    hunger_level=max(0.0, min(1.0, getattr(ally.creature, "hunger", 1.0) / max(1, getattr(ally.creature, "max_hunger", 1)))),
+                                    health_level=max(0.0, min(1.0, ally.creature.stats.hp / max(1, ally.creature.stats.max_hp))),
+                                    in_combat=True,
+                                    threatened=True
+                                )
+
+                                ctx = DecisionContext(
+                                    actor_id=creature.creature.creature_id,
+                                    target_id=ally.target.creature.creature_id,
+                                    actor_traits=actor_traits,
+                                    target_traits=target_traits,
+                                    metrics=metrics,
+                                    actor_state=actor_state,
+                                    target_state=target_state
+                                )
+
+                                # threat_level heuristics could be refined; use 0.5 as neutral baseline
+                                should_join, commitment = coop.evaluate_join_fight(ctx, threat_level=0.5)
+                                if should_join:
+                                    creature.attention.set_focus(StimulusType.COMBAT, self.current_time)
+                                    creature.target = ally.target
+                                    creature.last_retarget_time = self.current_time
+                                    joined = True
+                                    if rel:
+                                        # record cooperative behavior for relationship metrics
+                                        rel.record_cooperative_behavior("joined_fight")
+                                    break
+
+                        if joined:
+                            # We set a target by joining an ally's fight — skip other fallbacks
+                            pass
+                        else:
+                            # -----------------------------------------------------------------
+                            # 2) Try: Protect injured family / close kin
+                            # -----------------------------------------------------------------
+                            protected = False
+                            for ally in nearby_allies_list:
+                                if not ally.is_alive():
+                                    continue
+                                rel = creature.creature.relationships.get_relationship(ally.creature.creature_id)
+                                if not rel:
+                                    continue
+                                if rel.relationship_type in (
+                                    RelationshipType.PARENT,
+                                    RelationshipType.CHILD,
+                                    RelationshipType.SIBLING
+                                ):
+                                    ally_hp_percent = ally.creature.stats.hp / max(1, ally.creature.stats.max_hp)
+                                    # If family member is injured, prioritize defending them
+                                    if ally_hp_percent < 0.5:
+                                        # Prefer to target the ally's attacker if known
+                                        if ally.target and ally.target.is_alive():
+                                            creature.attention.set_focus(StimulusType.COMBAT, self.current_time)
+                                            creature.target = ally.target
+                                            creature.last_retarget_time = self.current_time
+                                            protected = True
+                                            break
+                                        else:
+                                            # Otherwise pick the nearest enemy in the local enemy list
+                                            if nearby_enemies_list:
+                                                # choose nearest enemy to the ally
+                                                nearest_enemy = min(
+                                                    nearby_enemies_list,
+                                                    key=lambda e: ally.spatial.distance_to(e.spatial)
+                                                )
+                                                creature.attention.set_focus(StimulusType.COMBAT, self.current_time)
+                                                creature.target = nearest_enemy
+                                                creature.last_retarget_time = self.current_time
+                                                protected = True
+                                                break
+                            if protected:
+                                pass
+                            else:
+                                # -----------------------------------------------------------------
+                                # 1) Try: Revenge priority (seek revenge targets)
+                                # -----------------------------------------------------------------
+                                revenge_found = False
+                                # RelationshipManager convenience helpers may exist; do explicit check
+                                for other in all_alive:
+                                    if other == creature or not other.is_alive():
+                                        continue
+                                    if creature.creature.relationships.has_relationship(
+                                        other.creature.creature_id,
+                                        RelationshipType.REVENGE_TARGET
+                                    ):
+                                        creature.attention.set_focus(StimulusType.COMBAT, self.current_time)
+                                        creature.target = other
+                                        creature.last_retarget_time = self.current_time
+                                        revenge_found = True
+                                        break
+
+                                if revenge_found:
+                                    pass
+                                else:
+                                    # -----------------------------------------------------------------
+                                    # Final fallback: use attention priorities (trait-modified) to pick a non-IDLE focus
+                                    # -----------------------------------------------------------------
+                                    current_focus = creature.attention.get_current_focus()
+                                    if current_focus and current_focus != StimulusType.IDLE:
+                                        creature.attention.set_focus(current_focus, self.current_time)
+                                    else:
+                                        priorities = getattr(creature.attention, "priorities", None)
+                                        if priorities:
+                                            # exclude IDLE when choosing best fallback
+                                            non_idle = {k: v for k, v in priorities.items() if k != StimulusType.IDLE}
+                                            if non_idle:
+                                                best = max(non_idle.items(), key=lambda kv: kv[1].base_priority)[0]
+                                            else:
+                                                best = StimulusType.EXPLORING
+                                            creature.attention.set_focus(best, self.current_time)
+                                        else:
+                                            # ultimate fallback to wandering behavior
+                                            if not getattr(creature.behavior, "behavior_type", None):
+                                                creature.behavior.behavior_type = BehaviorType.WANDERER
+                                            creature.attention.set_focus(StimulusType.EXPLORING, self.current_time)
+                    except Exception:
+                        # Defensive: don't crash the battle loop if something's missing
+                        pass
+
+                # Trait-driven fallback (minimal)
+                if not selected_target:
+                    # Forager: go to nearest resource
+                    if creature.creature.has_trait("Forager"):
+                        nearest = self.arena.get_nearest_resource(creature.spatial.position)
+                        if nearest:
+                            resource, _dist = nearest
+                            creature.target = None
+                            creature.attention.set_focus(StimulusType.FORAGING, self.current_time)
+                            movement_target = self.arena.get_resource_position(resource)
+
+                    # Restful: rest in place (don't seek combat)
+                    if creature.creature.has_trait("Restful"):
+                        creature.target = None
+                        creature.attention.set_focus(StimulusType.IDLE, self.current_time)
+                        movement_target = creature.spatial.position
+
+                    # Social: go towards nearest friendly
+                    if creature.creature.has_trait("Social"):
+                        ally = self._find_nearest_ally(creature)
+                        if ally:
+                            creature.target = None
+                            creature.attention.set_focus(StimulusType.SOCIAL, self.current_time)
+                            movement_target = ally.spatial.position
+
+                    # Patroller / Playful fallback to exploring/wanderer behavior
+                    if creature.creature.has_trait("Patroller") or creature.creature.has_trait("Playful"):
+                        creature.attention.set_focus(StimulusType.EXPLORING, self.current_time)
+                        creature.target = None
+                        # let behavior.get_movement_target handle the rest
+
             # Move towards target
             if creature.target and creature.target.is_alive():
                 movement_target = creature.target.spatial.position
@@ -1200,6 +1437,16 @@ class SpatialBattle:
         
         return enemies
 
+    # Add this helper to the SpatialBattle class (near other helpers like _get_allies/_get_enemies)
+    def _find_nearest_ally(self, creature: BattleCreature, max_distance: float = 50.0) -> Optional[BattleCreature]:
+        """
+        Return the nearest allied BattleCreature within max_distance, or None.
+        Minimal helper used by trait-driven fallback.
+        """
+        allies = self._get_allies(creature, self._creatures, max_distance)
+        if not allies:
+            return None
+        return min(allies, key=lambda a: creature.spatial.distance_to(a.spatial))
     
     def _attempt_attack(self, attacker: BattleCreature, defender: BattleCreature):
         """Attempt an attack from attacker to defender."""

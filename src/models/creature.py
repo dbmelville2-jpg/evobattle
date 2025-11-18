@@ -19,6 +19,10 @@ from .injury_tracker import InjuryTracker
 from .interactions import InteractionTracker
 from .combat_memory import CombatMemory
 
+# Base hunger depletion rate (hunger points per second).
+# Previous value: 1.0 — raise to increase hunger speed.
+HUNGER_BASE_DEPLETION = 2.0  # 1.5 hunger/sec -> 100 -> 0 in ~66.7s
+
 
 class CreatureType:
     """
@@ -409,8 +413,8 @@ class Creature:
         return (
             self.mature and 
             self.is_alive() and 
-            self.stats.hp > 0.5 * self.stats.max_hp and 
-            self.hunger > 70
+            self.stats.hp > 0.2 * self.stats.max_hp and 
+            self.hunger > 50
         )
     
     @property
@@ -481,9 +485,9 @@ class Creature:
         Args:
             delta_time: Time elapsed since last tick (seconds)
         """
-        # Base hunger depletion rate (1.0 per second means 100 seconds to starve)
-        hunger_depletion = 1.0 * delta_time
-        
+        # Base hunger depletion rate (uses configurable constant)
+        hunger_depletion = HUNGER_BASE_DEPLETION * delta_time
+
         # Apply metabolic trait modifiers
         if self.has_trait("Efficient Metabolism"):
             hunger_depletion *= 0.6  # 40% slower hunger depletion
@@ -496,7 +500,7 @@ class Creature:
         if self.has_trait("Indiscriminate Eater"):
             hunger_depletion *= 1.3  # 30% faster hunger depletion (eats anything but burns more)
         
-        # Deplete hunger
+        # Deplete hunger (preserve float precision)
         self.hunger = max(0, self.hunger - hunger_depletion)
     
     def eat(self, food_value: int = 40, food_type: str = "plant", toxicity: float = 0.0, palatability: float = 0.5) -> int:

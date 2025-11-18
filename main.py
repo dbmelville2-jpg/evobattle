@@ -57,6 +57,11 @@ from src.systems.battle_story_summarizer import (
 )
 from src.utils.name_generator import NameGenerator
 
+# New imports to wire the TraitInjection system
+from src.models.trait_analytics import TraitAnalytics
+from src.systems.trait_injection import TraitInjectionSystem, InjectionConfig
+from src.systems.breeding import Breeding
+
 
 def create_creature(name: str, level: int = 5, traits: list = None) -> Creature:
     """
@@ -136,7 +141,7 @@ def create_unified_battle():
     
     # Generate unique creature names
     name_gen = NameGenerator()
-    num_creatures = 15
+    num_creatures = 30 # starting creatures
     creature_names = name_gen.generate_batch(num_creatures)
     
     creatures = []
@@ -160,8 +165,8 @@ def create_unified_battle():
         creatures,
         arena_width=120.0,
         arena_height=100.0,
-        resource_spawn_rate=0.06,  # Reduced from 0.15 to 0.06 for better balance
-        initial_resources=20  # Starting pellets
+        resource_spawn_rate=0.001,  # Reduced from 0.15 to 0.06 for better balance
+        initial_resources=40  # Starting pellets
     )
     
     # Enable living world features
@@ -179,7 +184,7 @@ def create_unified_battle():
     return battle
 
 
-def run_battle_loop(window, battle):
+def run_battle_loop(window, battle, injection=None, trait_pool=None):
     """
     Run the main unified battle game loop with all features.
     
@@ -208,6 +213,8 @@ def run_battle_loop(window, battle):
     Args:
         window: Game window
         battle: Spatial battle instance with all features enabled
+        injection: optional TraitInjectionSystem instance
+        trait_pool: optional list to collect injected traits
     """
     # Create all renderers with optimized settings
     # Grid rendering OFF by default for best performance (can toggle with show_grid=True)
@@ -253,7 +260,14 @@ def run_battle_loop(window, battle):
     current_story = "Battle in progress... Story will be generated after 5 minutes of combat.\n\nPress 'S' to view this panel again at any time."
     current_tone = StoryTone.DRAMATIC
     last_story_notification = 0.0
-    
+
+    # Track generation by births for injection checks
+    last_birth_count = getattr(battle, 'birth_count', 0)
+    current_generation = 0
+
+    # Pressure-check timer (run evaluate_population_pressure once per second)
+    last_pressure_check = -1.0
+
     # Set initial story in viewer
     story_viewer.set_story(current_story, current_tone)
     
@@ -390,7 +404,58 @@ def run_battle_loop(window, battle):
                 last_story_notification = battle.current_time
                 print("\nStory generated! Press 'S' to view it.")
                 print(f"Total stories generated: {len(story_tracker.get_all_stories())}")
-        
+
+            # === Trait injection periodic checks ===
+            try:
+                # Track births as a proxy for generation
+                birth_count = getattr(battle, 'birth_count', 0)
+                if birth_count != last_birth_count:
+                    # Increment generation when births occurred
+                    current_generation += (birth_count - last_birth_count)
+                    last_birth_count = birth_count
+
+                    if injection:
+                        new_traits = injection.check_cosmic_event(current_generation)
+                        for t in new_traits:
+                            print(f"[COSMIC EVENT] new trait available: {t.name}")
+                            if trait_pool is not None:
+                                try:
+                                    trait_pool.append(t)
+                                except Exception as e:
+                                    print(f"Warning: failed to append trait to trait_pool: {e}")
+
+                # Evaluate population pressure once per second
+                if injection and battle.current_time - last_pressure_check >= 1.0:
+                    last_pressure_check = battle.current_time
+
+                    alive_bcs = [bc for bc in battle.creatures if bc.is_alive()]
+                    pop_size = len(alive_bcs)
+                    starvation_count = sum(1 for bc in alive_bcs if getattr(bc.creature, 'hunger', 100) < 10)
+
+                    if pop_size > 0:
+                        # Compute average normalized health (hp / max_hp)
+                        avg_health_norm = sum(
+                            (bc.creature.stats.hp / max(1, getattr(bc.creature.stats, 'max_hp', 1)))
+                            for bc in alive_bcs
+                        ) / pop_size
+                    else:
+                        avg_health_norm = 0.0
+
+                    pressure_trait = injection.evaluate_population_pressure(
+                        pop_size, starvation_count, avg_health_norm, current_generation
+                    )
+                    if pressure_trait:
+                        print(f"[PRESSURE INJECTION] applying {pressure_trait.name} to survivors")
+                        survivors = [bc.creature for bc in alive_bcs]
+                        for c in survivors:
+                            try:
+                                c.add_trait(pressure_trait.copy())
+                            except Exception as e:
+                                print(f"Warning: failed to add pressure trait: {e}")
+            except Exception as e:
+                # Don't let injection issues crash the game loop
+                print(f"Trait injection error: {e}")
+
         # Update animations
         creature_inspector.update(dt)
         event_animator.update(dt)
@@ -579,6 +644,31 @@ def main():
         title="EvoBattle - Living World Simulator"
         # fps parameter defaults to 30 in GameWindow.__init__
     )
+
+    # === Trait injection wiring (global for this run) ===
+    trait_pool = []
+    analytics = TraitAnalytics()
+    injection = TraitInjectionSystem(
+        config=InjectionConfig(injection_enabled=True),
+        analytics=analytics,
+        seed=None
+    )
+
+    def on_trait_injected(trait, reason):
+        # quick visible notification in console
+        try:
+            name = trait.name
+        except Exception:
+            name = str(trait)
+        print(f"[TRAIT INJECTED] {name} reason={reason}")
+        # optional: add to a global trait pool for the game to use
+        try:
+            trait_pool.append(trait)
+        except Exception as e:
+            print(f"Warning: failed to append trait to trait_pool: {e}")
+
+    injection.register_injection_callback(on_trait_injected)
+    # ==================================================
     
     print("✓ All systems ready!")
     print("✓ Performance optimizations: Spatial grid, caching, effect pooling")
@@ -587,9 +677,18 @@ def main():
     while True:
         # Create unified battle with all features
         battle = create_unified_battle()
+
+        # Wire injection into breeding so breeding-based injections run
+        try:
+            battle.breeding_system = Breeding(injection_system=injection)
+        except Exception:
+            try:
+                battle.breeding_system = Breeding(mutation_rate=0.1, trait_inheritance_chance=0.8, injection_system=injection)
+            except Exception as e:
+                print(f"Warning: could not replace battle.breeding_system with injection-enabled Breeding: {e}")
         
-        # Run the game
-        restart = run_battle_loop(window, battle)
+        # Run the game; pass injection and trait_pool so run_battle_loop can use them
+        restart = run_battle_loop(window, battle, injection=injection, trait_pool=trait_pool)
         
         if not restart:
             break

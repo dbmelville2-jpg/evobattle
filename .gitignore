@@ -63,3 +63,4 @@ temp/
 # Test outputs
 test_visual_demo.py
 combat_improvements_demo.png
+.vs/

@@ -80,7 +80,41 @@ class GrassGrowthSystem:
     - Nutrient zones: Enhanced growth where creatures died
     - Growth pulses: Periodic environmental boosts
     - Symbiotic bonuses: Herbivores boost nearby grass growth
+
+    New tuning knobs:
+    - baseline_growth_multiplier: scales the entire multiplier (affects base)
+    - global_growth_scale: scales only bonus portion above 1.0
     """
+
+    # ---------------------------------------------------------------------
+    # DEFAULT KNOB VALUES (documented for quick reference)
+    #
+    # Constructor defaults (current):
+    #   baseline_growth_multiplier = 1.0        # full baseline (no global base scaling)
+    #   global_growth_scale       = 0.5        # scale bonus portion (0.0..1.0)
+    #   pollination_chance        = 0.03       # 1% chance on revisit
+    #   pollination_cooldown      = 5.0       # seconds between pollination attempts per creature
+    #
+    # Growth pulse defaults:
+    #   growth_pulse_multiplier   = 1.10       # 10% boost while pulse active
+    #   growth_pulse_interval     = 60.0       # seconds between pulses
+    #   growth_pulse_duration     = 8.0        # seconds pulse lasts
+    #
+    # Nutrient zone defaults:
+    #   NutrientZone(strength=1.5, radius=15.0) default constructor values
+    #   on_creature_death uses strength ? 1.05..1.15 and radius ? 8.0..12.0
+    #   nutrient zone duration = 30.0 seconds
+    #
+    # Formula used to compute final multiplier:
+    #   computed = (effects from nutrient zones, pulses, symbiosis)  # >= 1.0
+    #   scaled   = 1.0 + (computed - 1.0) * global_growth_scale        # scales bonus only
+    #   final    = baseline_growth_multiplier * scaled               # scales whole result
+    #
+    # Examples:
+    #   computed = 1.5, global_growth_scale = 0.5, baseline = 1.0 -> final = 1.25
+    #   computed = 1.10, global_growth_scale = 0.5, baseline = 0.8 -> final = 0.8 * 1.05 = 0.84
+    #
+    # ---------------------------------------------------------------------
     
     def __init__(
         self,
@@ -89,7 +123,12 @@ class GrassGrowthSystem:
         enable_pollination: bool = True,
         enable_nutrient_zones: bool = True,
         enable_growth_pulses: bool = True,
-        enable_symbiotic_bonus: bool = True
+        enable_symbiotic_bonus: bool = True,
+        # New tuning knobs:
+        baseline_growth_multiplier: float = 0.1,
+        global_growth_scale: float = 0.8,
+        pollination_chance: float = 0.02,
+        pollination_cooldown: float = 8.0
     ):
         """
         Initialize the grass growth system.
@@ -101,6 +140,10 @@ class GrassGrowthSystem:
             enable_nutrient_zones: Enable nutrient zone mechanic
             enable_growth_pulses: Enable growth pulse events
             enable_symbiotic_bonus: Enable symbiotic growth bonuses
+            baseline_growth_multiplier: Multiplies the final growth multiplier (0.0..inf)
+            global_growth_scale: Scale factor applied to bonus growth (0..1 slows bonus)
+            pollination_chance: Chance to create a new pellet on revisits (0..1)
+            pollination_cooldown: Minimum seconds between pollination attempts per creature
         """
         self.arena_width = arena_width
         self.arena_height = arena_height
@@ -111,13 +154,25 @@ class GrassGrowthSystem:
         self.enable_growth_pulses = enable_growth_pulses
         self.enable_symbiotic_bonus = enable_symbiotic_bonus
         
+        # Baseline multiplier (scales entire final multiplier)
+        # Setting to <1.0 reduces baseline growth as well as bonuses.
+        self.baseline_growth_multiplier = max(0.0, float(baseline_growth_multiplier))
+        
+        # Tuning knobs (exposed so tests/tools can reduce growth)
+        # global_growth_scale scales only the bonus portion above 1.0:
+        # final = baseline_growth_multiplier * (1.0 + (computed_multiplier - 1.0) * global_growth_scale)
+        # Setting global_growth_scale to 0.5 will halve additional growth effects.
+        self.global_growth_scale = max(0.0, float(global_growth_scale))
+        self.pollination_chance = float(pollination_chance)
+        self.pollination_cooldown = float(pollination_cooldown)
+        
         # Nutrient zones from creature deaths
         self.nutrient_zones: List[NutrientZone] = []
         
         # Growth pulse state
         self.growth_pulse_active = False
         self.growth_pulse_end_time = 0.0
-        self.growth_pulse_multiplier = 1.10  # 10% boost during pulse (further reduced)
+        self.growth_pulse_multiplier = 1.10  # 10% boost during pulse (can be tuned)
         self.last_growth_pulse = time.time()
         self.growth_pulse_interval = 60.0  # Every 60 seconds
         self.growth_pulse_duration = 8.0  # Lasts 8 seconds
@@ -125,8 +180,16 @@ class GrassGrowthSystem:
         # Pollination tracking - tracks which pellets creatures have visited
         # Key: creature_id, Value: set of pellet_ids
         self.creature_visited_pellets: Dict[str, set] = {}
-        self.pollination_cooldown = 5.0  # Can pollinate once per 5 seconds per creature
+        # Pollination cooldown (seconds) and last times
         self.last_pollination: Dict[str, float] = {}
+    
+    def set_global_growth_scale(self, scale: float) -> None:
+        """Adjust global growth scale at runtime (0.0 = disable bonus entirely)."""
+        self.global_growth_scale = max(0.0, float(scale))
+    
+    def set_baseline_growth_multiplier(self, scale: float) -> None:
+        """Adjust baseline multiplier at runtime (0.0 = disable growth entirely)."""
+        self.baseline_growth_multiplier = max(0.0, float(scale))
     
     def on_creature_death(
         self,
@@ -199,18 +262,18 @@ class GrassGrowthSystem:
         Returns:
             Multiplier for growth rate (1.0 = baseline, >1.0 = faster growth)
         """
-        multiplier = 1.0
+        computed = 1.0
         
         # Nutrient zone effect
         if self.enable_nutrient_zones:
             for zone in self.nutrient_zones:
                 zone_mult = zone.get_growth_multiplier(pellet.x, pellet.y)
-                if zone_mult > multiplier:
-                    multiplier = zone_mult
+                if zone_mult > computed:
+                    computed = zone_mult
         
         # Growth pulse effect (stacks with nutrient zones)
         if self.enable_growth_pulses and self.growth_pulse_active:
-            multiplier *= self.growth_pulse_multiplier
+            computed *= self.growth_pulse_multiplier
         
         # Symbiotic bonus (herbivores boost nearby grass)
         if self.enable_symbiotic_bonus and nearby_creatures:
@@ -226,9 +289,17 @@ class GrassGrowthSystem:
             if herbivore_count > 0:
                 # Small bonus per nearby herbivore (max 8% boost from 2+ herbivores)
                 bonus = min(0.08, herbivore_count * 0.05)  # Further reduced
-                multiplier *= (1.0 + bonus)
+                computed *= (1.0 + bonus)
         
-        return multiplier
+        # Apply global scale to the bonus portion only (so baseline remains 1.0 in that formula)
+        # then apply baseline multiplier to scale the entire result.
+        if self.global_growth_scale != 1.0:
+            scaled = 1.0 + (computed - 1.0) * self.global_growth_scale
+        else:
+            scaled = computed
+        
+        final = self.baseline_growth_multiplier * scaled
+        return final
     
     def try_pollination(
         self,
@@ -268,8 +339,8 @@ class GrassGrowthSystem:
         
         # If creature has visited this pellet before, it might spread seeds
         if pellet_id in self.creature_visited_pellets[creature_id]:
-            # 3% chance to pollinate when revisiting (reduced from 5% for balance)
-            if random.random() < 0.03:
+            # Use configurable pollination chance (lower = slower growth)
+            if random.random() < self.pollination_chance:
                 # Create new pellet nearby (within creature's movement range)
                 angle = random.uniform(0, 2 * math.pi)
                 distance = random.uniform(5.0, 15.0)

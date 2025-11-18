@@ -75,6 +75,9 @@ class CombatTargetingSystem:
     - Context (outnumbered, injured allies, etc.)
     """
     
+    # Turn this to True to re-enable prints for debugging
+    DEBUG: bool = False
+
     # Configuration parameters
     MAX_CHASE_DISTANCE = 30.0        # Don't chase enemies beyond this distance
     CLOSE_RANGE = 10.0               # Enemies within this are "close"
@@ -95,58 +98,104 @@ class CombatTargetingSystem:
     ) -> Optional['BattleCreature']:
         """
         Select the best target based on all available information.
-        
+
         Args:
             attacker: The creature selecting a target
             potential_targets: List of possible targets
             context: Current combat context
-            
+
         Returns:
             Best target to attack, or None if no valid targets
         """
+        # Defensive: empty input
         if not potential_targets:
+            if CombatTargetingSystem.DEBUG:
+                print(f"[Targeting DEBUG] attacker={attacker.creature.name}[id={id(attacker)}] incoming=[] -> no targets")
             return None
-        
+
+        # DEBUG: log incoming list
+        try:
+            incoming = ", ".join(f"{t.creature.name}[id={id(t)}]" for t in potential_targets)
+        except Exception:
+            incoming = str([id(t) for t in potential_targets])
+        if CombatTargetingSystem.DEBUG:
+            print(f"[Targeting DEBUG] attacker={attacker.creature.name}[id={id(attacker)}] incoming=[{incoming}]")
+
         # Safety check: Remove self from potential targets if somehow present
+        before_count = len(potential_targets)
         potential_targets = [t for t in potential_targets if t != attacker]
+        after_count = len(potential_targets)
+        if before_count != after_count and CombatTargetingSystem.DEBUG:
+            print(f"[Targeting DEBUG] attacker={attacker.creature.name}[id={id(attacker)}] removed_self_from_incoming (removed {before_count-after_count})")
+
         if not potential_targets:
+            if CombatTargetingSystem.DEBUG:
+                print(f"[Targeting DEBUG] attacker={attacker.creature.name}[id={id(attacker)}] -> no valid targets after self-filter")
             return None
-        
+
         # Get current target (if any) for stickiness check
-        current_target = attacker.target
-        
-        # Check if we should stick with current target
-        if current_target and current_target in potential_targets:
-            if hasattr(attacker.creature, 'combat_memory'):
-                if attacker.creature.combat_memory.should_stick_with_target(
-                    current_target.creature.creature_id,
-                    CombatTargetingSystem.MIN_TARGET_SWITCH_TIME
-                ):
-                    # Don't switch yet, stay on target
-                    distance = attacker.spatial.distance_to(current_target.spatial)
-                    if distance <= CombatTargetingSystem.MAX_CHASE_DISTANCE:
-                        return current_target
-        
+        current_target = getattr(attacker, "target", None)
+
+        # Stickiness: prefer current target when combat memory requests it
+        try:
+            if current_target and current_target in potential_targets:
+                cm = getattr(attacker.creature, "combat_memory", None)
+                should_stick = False
+                if cm and hasattr(cm, "should_stick_with_target"):
+                    try:
+                        should_stick = cm.should_stick_with_target(
+                            current_target.creature.creature_id,
+                            getattr(CombatTargetingSystem, "MIN_TARGET_SWITCH_TIME", 1.0)
+                        )
+                    except Exception:
+                        should_stick = False
+                if should_stick:
+                    if CombatTargetingSystem.DEBUG:
+                        print(f"[Targeting DEBUG] attacker={attacker.creature.name}[id={id(attacker)}] sticking with current target {current_target.creature.name}[id={id(current_target)}]")
+                    return current_target
+        except Exception:
+            # Be conservative: continue to scoring if any error
+            pass
+
         # Score all potential targets
         scores: List[TargetScore] = []
-        
+
         for target in potential_targets:
             score = CombatTargetingSystem._score_target(attacker, target, context)
             if score.total_score > 0:  # Only consider valid targets
                 scores.append(score)
-        
+
         if not scores:
+            if CombatTargetingSystem.DEBUG:
+                print(f"[Targeting DEBUG] attacker={attacker.creature.name}[id={id(attacker)}] -> no targets after scoring")
             return None
-        
+
         # Select highest scoring target
         best_score = max(scores, key=lambda s: s.total_score)
-        
+
         # Find the corresponding target
+        best = None
         for target in potential_targets:
-            if target.creature.creature_id == best_score.target_id:
-                return target
-        
-        return None
+            try:
+                if target.creature.creature_id == best_score.target_id:
+                    best = target
+                    break
+            except Exception:
+                continue
+
+        # DEBUG: log result
+        if best:
+            try:
+                if CombatTargetingSystem.DEBUG:
+                    print(f"[Targeting DEBUG] attacker={attacker.creature.name}[id={id(attacker)}] selected={best.creature.name}[id={id(best)}] score={best_score.total_score:.2f}")
+            except Exception:
+                if CombatTargetingSystem.DEBUG:
+                    print(f"[Targeting DEBUG] attacker selected id={id(best)} score={best_score.total_score:.2f}")
+        else:
+            if CombatTargetingSystem.DEBUG:
+                print(f"[Targeting DEBUG] attacker={attacker.creature.name}[id={id(attacker)}] selected=None (no matching id)")
+
+        return best
     
     @staticmethod
     def _score_target(
