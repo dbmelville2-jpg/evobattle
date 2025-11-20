@@ -6,6 +6,7 @@ relationships, and achievements in an interactive panel.
 """
 
 import pygame
+import os
 from typing import Optional, List, Tuple
 from ..models.creature import Creature
 from ..models.history import EventType
@@ -35,6 +36,8 @@ class CreatureInspector:
         self.header_font = pygame.font.Font(None, 22)
         self.text_font = pygame.font.Font(None, 18)
         self.small_font = pygame.font.Font(None, 16)
+        # store small font size for icon scaling
+        self.small_font_size = self.small_font.get_height() or 16
         
         # Colors
         self.bg_color = (30, 30, 40, 230)
@@ -44,6 +47,51 @@ class CreatureInspector:
         self.stat_color = (150, 200, 255)
         self.warning_color = (255, 150, 100)
         self.success_color = (100, 255, 150)
+        
+        # Load optional raster icon assets (PNG/JPG) from assets/icons/
+        self.icon_surfaces = {}
+        try:
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+            icons_dir = os.path.join(project_root, 'assets', 'icons')
+            if os.path.isdir(icons_dir):
+                for fname in os.listdir(icons_dir):
+                    name, ext = os.path.splitext(fname)
+                    key = name.lower()
+                    if ext.lower() in ('.png', '.jpg', '.jpeg'):
+                        path = os.path.join(icons_dir, fname)
+                        try:
+                            surf = pygame.image.load(path)
+
+                            # Prefer to preserve whatever alpha the loaded image has.
+                            # Only call convert_alpha() when a display surface exists (safe), otherwise
+                            # keep the raw loaded Surface to avoid losing alpha (convert() can strip it).
+                            try:
+                                if pygame.display.get_init() and pygame.display.get_surface() is not None:
+                                    try:
+                                        surf = surf.convert_alpha()
+                                    except Exception:
+                                        # keep original surface if conversion fails
+                                        pass
+                            except Exception:
+                                pass
+
+                            # Store a couple normalized keys so lookups are forgiving (underscores/dashes)
+                            normalized_keys = {key, key.replace('_', ''), key.replace('-', '')}
+
+                            if os.getenv('DEBUG_CREATURE_INSPECTOR_SYMBOLS'):
+                                print(f"Loaded icon: {fname} -> keys: {sorted(normalized_keys)}")
+
+                            for nk in normalized_keys:
+                                # avoid overwriting an existing better key
+                                if nk not in self.icon_surfaces:
+                                    self.icon_surfaces[nk] = surf
+                        except Exception as e:
+                            if os.getenv('DEBUG_CREATURE_INSPECTOR_SYMBOLS'):
+                                print(f"Failed loading icon {fname}: {e}")
+                            # Continue loading other icons even if one fails
+                            continue
+        except Exception:
+            self.icon_surfaces = {}
         
         # State
         self.selected_creature: Optional[Creature] = None
@@ -69,7 +117,7 @@ class CreatureInspector:
         self.position = prefs.get('inspector.position', None)  # Will be set on first render
         self.auto_hide_timeout = 3.0  # seconds
         self.auto_hide_timer = 0.0
-        
+    
         # Drag state
         self.dragging = False
         self.drag_offset = (0, 0)
@@ -79,6 +127,54 @@ class CreatureInspector:
         self.alpha = 255 if self.visible else 0
         self.target_alpha = 255 if self.visible else 0
         self.animation_speed = 800  # alpha units per second
+    
+    def _render_symbol(self, surface: pygame.Surface, key_or_symbol: str, x: int, y: int, base_font: pygame.font.Font, color: Tuple[int, int, int, int]=None):
+        """Render an icon image if available, otherwise draw text/symbol.
+        Returns (w,h) of drawn area.
+        """
+        if color is None:
+            color = self.text_color
+
+        # If a loaded icon exists for this key, blit it scaled to small_font_size
+        try:
+            lookup = (key_or_symbol or '').lower()
+
+            if os.getenv('DEBUG_CREATURE_INSPECTOR_SYMBOLS'):
+                print(f"_render_symbol lookup: '{lookup}' (orig: '{key_or_symbol}')")
+
+            if lookup in self.icon_surfaces:
+                img = self.icon_surfaces[lookup]
+                if os.getenv('DEBUG_CREATURE_INSPECTOR_SYMBOLS'):
+                    try:
+                        print(f"  Found surface for '{lookup}': size={img.get_size()} flags={img.get_flags()} alpha={img.get_alpha()}")
+                    except Exception:
+                        pass
+                size = max(8, getattr(self, 'small_font_size', 16))
+                # scale keeping aspect
+                try:
+                    img_s = pygame.transform.smoothscale(img, (size, size))
+                except Exception:
+                    img_s = pygame.transform.scale(img, (size, size))
+                surface.blit(img_s, (x, y))
+                return img_s.get_width(), img_s.get_height()
+            else:
+                if os.getenv('DEBUG_CREATURE_INSPECTOR_SYMBOLS'):
+                    print(f"  No surface for '{lookup}'. Available keys: {sorted(list(self.icon_surfaces.keys()))[:20]}")
+        except Exception as e:
+            if os.getenv('DEBUG_CREATURE_INSPECTOR_SYMBOLS'):
+                print(f"_render_symbol error for '{key_or_symbol}': {e}")
+            pass
+
+        # Fallback to text rendering
+        use_color = color
+        if isinstance(color, (list, tuple)) and len(color) == 4:
+            use_color = color[:3]
+        try:
+            rendered = base_font.render(key_or_symbol, True, use_color)
+            surface.blit(rendered, (x, y))
+            return rendered.get_width(), rendered.get_height()
+        except Exception:
+            return 0, 0
     
     def select_creature(self, creature: Optional[Creature]):
         """
@@ -241,7 +337,7 @@ class CreatureInspector:
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             if self.dragging:
                 self.dragging = False
-                # Save position
+                # Saved position
                 prefs = get_preferences()
                 prefs.set('inspector.position', self.position)
                 return True
@@ -271,6 +367,26 @@ class CreatureInspector:
         
         return False
     
+    def _ensure_icons_converted(self):
+        """
+        Convert loaded icon surfaces with convert_alpha() once a display surface exists.
+        This handles the case where the inspector was instantiated before the pygame display
+        was initialized so images were loaded but not converted for the display format.
+        """
+        try:
+            if not (pygame.display.get_init() and pygame.display.get_surface() is not None):
+                return
+            for key, surf in list(self.icon_surfaces.items()):
+                try:
+                    # if surf already has same format this will be cheap; otherwise convert_alpha() makes blitting correct
+                    conv = surf.convert_alpha()
+                    self.icon_surfaces[key] = conv
+                except Exception:
+                    # ignore failures and keep the original surface
+                    pass
+        except Exception:
+            pass
+
     def render(self, screen: pygame.Surface):
         """
         Render the inspector panel.
@@ -278,6 +394,8 @@ class CreatureInspector:
         Args:
             screen: Pygame surface to draw on
         """
+        # Ensure icons are converted to the display format (if needed)
+        self._ensure_icons_converted()
         # Don't render if completely invisible
         if self.alpha < 1:
             return
@@ -323,17 +441,15 @@ class CreatureInspector:
         )
         panel.blit(title_bar_text, (10, 8))
         
-        # Pin button
+        # Pin button (use loaded icon if available)
         pin_x = panel_width - 60
         pin_color = self.success_color if self.is_pinned else (150, 150, 150)
-        pin_symbol = "📌" if self.is_pinned else "○"
-        pin_text = self.text_font.render(pin_symbol, True, (*pin_color, int(255 * self.alpha / 255)))
-        panel.blit(pin_text, (pin_x, 5))
+        pin_key = 'pin' if self.is_pinned else 'circle'
+        self._render_symbol(panel, pin_key, pin_x, 5, self.text_font, (*pin_color, int(255 * self.alpha / 255)))
         
         # Close button
         close_x = panel_width - 30
-        close_text = self.text_font.render("✕", True, (*self.warning_color, int(255 * self.alpha / 255)))
-        panel.blit(close_text, (close_x, 5))
+        self._render_symbol(panel, 'close', close_x, 5, self.text_font, (*self.warning_color, int(255 * self.alpha / 255)))
         
         # Render content with scrolling
         content_surface = self._render_content(creature, panel_width)
@@ -511,49 +627,70 @@ class CreatureInspector:
                     'legendary': (255, 215, 0)
                 }
                 trait_color = rarity_colors.get(trait.rarity, self.text_color)
-                
-                # Rarity indicator
-                rarity_marker = {
-                    'common': "○",
-                    'uncommon': "◆",
-                    'rare': "★",
-                    'legendary': "✦"
-                }.get(trait.rarity, "•")
-                
-                trait_line = f"{rarity_marker} {trait.name}"
-                trait_text = self.text_font.render(trait_line, True, trait_color)
-                content.blit(trait_text, (x_margin + 10, y))
-                y += self.line_height
-                
-                # Provenance indicator (NEW!)
+
+                # Draw a small colored square for rarity instead of a unicode marker
+                square_size = 10
+                square_x = x_margin + 10
+                square_y = y + max(0, (self.line_height - square_size) // 2)
+                try:
+                    pygame.draw.rect(content, trait_color, pygame.Rect(square_x, square_y, square_size, square_size))
+                except Exception:
+                    # fallback: no-op if draw fails
+                    pass
+
+                # Trait name
+                name_x = square_x + square_size + 6
+                name_surf = self.text_font.render(trait.name, True, trait_color)
+                content.blit(name_surf, (name_x, y))
+                y += name_surf.get_height() + 2
+
+                # Provenance / source (if available)
                 if hasattr(trait, 'provenance') and trait.provenance:
-                    source_icons = {
-                        'inherited': "👪",
-                        'mutated': "🧬",
-                        'emergent': "✨",
-                        'cosmic': "🌟",
-                        'adaptive': "🛡️",
-                        'diversity_intervention': "🎲"
-                    }
-                    source_icon = source_icons.get(trait.provenance.source_type, "•")
-                    source_text = f"{source_icon} {trait.provenance.source_type.title()}"
-                    
-                    if trait.provenance.generation > 0:
-                        source_text += f" (Gen {trait.provenance.generation})"
-                    
-                    prov_color = (150, 150, 150)
-                    if trait.provenance.source_type in ['emergent', 'cosmic', 'adaptive']:
-                        prov_color = (255, 200, 100)  # Highlight special origins
-                    
-                    prov_render = self.small_font.render(source_text, True, prov_color)
-                    content.blit(prov_render, (x_margin + 25, y))
+                    prov_text = f"{trait.provenance.source_type.title()}"
+                    if getattr(trait.provenance, 'generation', 0) > 0:
+                        prov_text += f" (Gen {trait.provenance.generation})"
+                    prov_render = self.small_font.render(prov_text, True, (150, 150, 150))
+                    content.blit(prov_render, (name_x, y))
                     y += self.line_height - 2
-                
-                # Trait description (truncated)
-                desc_truncated = trait.description[:60] + "..." if len(trait.description) > 60 else trait.description
-                desc_text = self.small_font.render(desc_truncated, True, (180, 180, 180))
-                content.blit(desc_text, (x_margin + 25, y))
-                y += self.line_height + 2
+
+                # Numeric modifiers: show positive/negative effects (e.g. +15% attack)
+                try:
+                    mods = []
+                    # strength
+                    if hasattr(trait, 'strength_modifier') and trait.strength_modifier is not None:
+                        delta = (float(trait.strength_modifier) - 1.0) * 100.0
+                        if abs(delta) >= 0.5:
+                            mods.append((f"Atk {delta:+.0f}%", delta))
+                    # speed
+                    if hasattr(trait, 'speed_modifier') and trait.speed_modifier is not None:
+                        delta = (float(trait.speed_modifier) - 1.0) * 100.0
+                        if abs(delta) >= 0.5:
+                            mods.append((f"Spd {delta:+.0f}%", delta))
+                    # defense
+                    if hasattr(trait, 'defense_modifier') and trait.defense_modifier is not None:
+                        delta = (float(trait.defense_modifier) - 1.0) * 100.0
+                        if abs(delta) >= 0.5:
+                            mods.append((f"Def {delta:+.0f}%", delta))
+
+                    if mods:
+                        # Render modifiers inline as small labels
+                        mod_x = name_x
+                        for mod_text, mod_val in mods:
+                            mod_color = (100, 255, 150) if mod_val > 0 else (255, 150, 100)
+                            mod_surf = self.small_font.render(mod_text, True, mod_color)
+                            content.blit(mod_surf, (mod_x, y))
+                            mod_x += mod_surf.get_width() + 8
+                        y += self.line_height - 2
+                except Exception:
+                    pass
+
+                # Full trait description (wrapped)
+                desc = trait.description if hasattr(trait, 'description') and trait.description else ''
+                if desc:
+                    wrap_x = name_x
+                    wrap_width = content_width - (wrap_x - x_margin) - 10
+                    y = self._render_wrapped_text(content, desc, wrap_x, y, wrap_width, self.small_font, (200, 200, 200))
+                    y += 4
         else:
             text = self.small_font.render("No special traits", True, (150, 150, 150))
             content.blit(text, (x_margin + 10, y))
@@ -741,10 +878,9 @@ class CreatureInspector:
         recent_events = history.get_recent_events(8)
         if recent_events:
             for event in recent_events:
-                # Event type indicator
-                event_icon = self._get_event_icon(event.event_type)
-                icon_text = self.small_font.render(event_icon, True, self.highlight_color)
-                content.blit(icon_text, (x_margin + 10, y))
+                # Event type indicator (use loaded icon if available)
+                event_icon_key_or_symbol = self._get_event_icon(event.event_type)
+                self._render_symbol(content, event_icon_key_or_symbol, x_margin + 10, y, self.small_font, self.highlight_color)
                 
                 # Event description
                 desc = self.small_font.render(event.description[:50], True, self.text_color)
@@ -771,7 +907,7 @@ class CreatureInspector:
             surface: Surface to draw on
             title: Header title
             x: X position
-            y: Y position
+            y: Y Position
             
         Returns:
             New Y position after header
@@ -838,26 +974,64 @@ class CreatureInspector:
     
     def _get_event_icon(self, event_type: EventType) -> str:
         """
-        Get an icon/emoji for an event type.
-        
-        Args:
-            event_type: Type of event
-            
-        Returns:
-            Icon string
+        Get an icon key for an event type. Prefer raster icon keys (PNG) if available.
+        Returns a key that `_render_symbol` will look up. Falls back to a simple ASCII marker
+        to avoid relying on system emoji fonts which often render as empty squares.
         """
-        icons = {
-            EventType.BIRTH: "🐣",
-            EventType.DEATH: "💀",
-            EventType.BATTLE_START: "⚔️",
-            EventType.BATTLE_WIN: "🏆",
-            EventType.BATTLE_LOSS: "💔",
-            EventType.ATTACK: "⚡",
-            EventType.CRITICAL_HIT: "💥",
-            EventType.KILL: "🗡️",
-            EventType.REVENGE_KILL: "☠️",
-            EventType.OFFSPRING_BORN: "👶",
-            EventType.FIRST_KILL: "🎯",
-            EventType.MILESTONE_REACHED: "🎖️",
+        # common ascii/text fallbacks
+        ascii_fallbacks = {
+            EventType.BIRTH: "(birth)",
+            EventType.DEATH: "(death)",
+            EventType.BATTLE_START: "(battle)",
+            EventType.BATTLE_WIN: "(win)",
+            EventType.BATTLE_LOSS: "(loss)",
+            EventType.ATTACK: "(attack)",
+            EventType.CRITICAL_HIT: "(crit)",
+            EventType.KILL: "(kill)",
+            EventType.REVENGE_KILL: "(revenge)",
+            EventType.OFFSPRING_BORN: "(offspring)",
+            EventType.FIRST_KILL: "(first)",
+            EventType.MILESTONE_REACHED: "(milestone)",
         }
-        return icons.get(event_type, "•")
+
+        key = event_type.name.lower()
+        # Try several normalized variants so filename matching is forgiving
+        candidates = [key, key.replace('_', ''), key.replace('_', '-'), key.replace('-', ''), key.replace('-', '_')]
+        for c in candidates:
+            if c in self.icon_surfaces:
+                return c
+
+        # Event-specific preferred names (try these before general fallbacks)
+        event_preferred = {
+            EventType.BATTLE_START: ['battle_start', 'battle', 'battle-start', 'battlestart', 'attack'],
+            EventType.BATTLE_WIN: ['battle_win', 'win', 'trophy', 'star'],
+            EventType.BATTLE_LOSS: ['battle_loss', 'loss', 'heart', 'brokenheart'],
+            EventType.ATTACK: ['attack', 'strike', 'slash'],
+            EventType.CRITICAL_HIT: ['critical_hit', 'critical', 'crit', 'explode'],
+            EventType.KILL: ['kill', 'skull', 'dagger'],
+            EventType.REVENGE_KILL: ['revenge_kill', 'revenge', 'skull'],
+            EventType.BIRTH: ['birth', 'offspring', 'baby'],
+            EventType.OFFSPRING_BORN: ['offspring_born', 'offspring', 'baby'],
+            EventType.DEATH: ['death', 'skull'],
+            EventType.FIRST_KILL: ['first_kill', 'first', 'milestone'],
+            EventType.MILESTONE_REACHED: ['milestone', 'star', 'trophy']
+        }
+
+        prefs = event_preferred.get(event_type, [])
+        for alt in prefs:
+            alt_norms = [alt, alt.replace('_', ''), alt.replace('-', ''), alt.replace('-', '_')]
+            for a in alt_norms:
+                if a in self.icon_surfaces:
+                    return a
+
+        # Also try some obvious general semantic names (ordered to avoid choosing 'birth' for battle)
+        semantic_alts = [
+            'battle', 'win', 'loss', 'attack', 'critical', 'kill', 'revenge', 'offspring', 'first', 'milestone',
+            'star', 'family', 'pin', 'circle', 'diamond', 'dna', 'birth', 'death'
+        ]
+        for alt in semantic_alts:
+            if alt in self.icon_surfaces:
+                return alt
+
+        # No raster icon available — return a short ascii fallback
+        return ascii_fallbacks.get(event_type, "•")

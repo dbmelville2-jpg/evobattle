@@ -111,7 +111,7 @@ def main():
         rgb = creature.get_display_color()
         print(f"✓ {creature.name:15s} - Strain: {creature.strain_id:12s} "
               f"Hue: {creature.hue:6.1f}° RGB: {rgb}")
-        print(f"  Traits: {', '.join(t.name for t in creature.traits)}")
+        print(f"  Traits: {', '.join(t.base_name() for t in creature.traits)}")
     
     print()
     print("=" * 70)
@@ -160,11 +160,11 @@ def main():
                     print(f"  Child strain: {offspring.strain_id[:8]}")
                     print(f"  Parent hues: {parent1.hue:.1f}° + {parent2.hue:.1f}°")
                     print(f"  Child hue: {offspring.hue:.1f}° (RGB: {offspring.get_display_color()})")
-                    print(f"  Traits: {', '.join(t.name for t in offspring.traits)}")
+                    print(f"  Traits: {', '.join(t.base_name() for t in offspring.traits)}")
                     
-                    # Check for mutations
-                    parent_trait_names = set(t.name for t in parent1.traits + parent2.traits)
-                    child_trait_names = set(t.name for t in offspring.traits)
+                    # Check for mutations and report trade-offs
+                    parent_trait_names = set(t.base_name() for t in parent1.traits + parent2.traits)
+                    child_trait_names = set(t.base_name() for t in offspring.traits)
                     
                     new_traits = child_trait_names - parent_trait_names
                     lost_traits = parent_trait_names - child_trait_names
@@ -173,6 +173,11 @@ def main():
                         print(f"  🧬 MUTATION: Gained trait(s): {', '.join(new_traits)}")
                     if lost_traits:
                         print(f"  🧬 MUTATION: Lost trait(s): {', '.join(lost_traits)}")
+                    
+                    # Report per-trait trade-off details when mutated
+                    for t in offspring.traits:
+                        if t.is_mutated():
+                            print(f"  ⚡ MUTATED TRAIT: {t.base_name()} -> mods: str={t.strength_modifier:.3f}, spd={t.speed_modifier:.3f}, def={t.defense_modifier:.3f}")
                     
                     # Check for new strain
                     if (offspring.strain_id != parent1.strain_id and 

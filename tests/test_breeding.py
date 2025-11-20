@@ -3,6 +3,7 @@ Unit tests for enhanced Breeding system.
 """
 
 import unittest
+import random
 from src.systems.breeding import Breeding
 from src.models.creature import Creature, CreatureType
 from src.models.stats import Stats
@@ -14,6 +15,8 @@ class TestBreeding(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
+        # Make tests deterministic by seeding randomness
+        random.seed(0)
         self.breeding = Breeding(mutation_rate=0.1, trait_inheritance_chance=0.8)
         
         # Create parent creatures
@@ -135,13 +138,15 @@ class TestBreeding(unittest.TestCase):
             strength_modifier=1.0
         )
         
+        # Use a fixed seed to make mutation deterministic for the test
+        random.seed(1)
         mutated = self.breeding.apply_mutation(original_trait)
         
-        # Mutated trait should have different modifiers
-        # Note: mutation changes stats by ~10%, so check they're different
+        # Mutated trait should have different modifiers (mutation applied)
         self.assertNotEqual(mutated.strength_modifier, 1.0)
-        # GeneticsEngine marks mutations with '*' suffix
-        self.assertTrue(mutated.name.endswith('*'))
+        # Mutation marker is cosmetic; prefer the metadata flag and base_name()
+        self.assertTrue(mutated.is_mutated())
+        self.assertEqual(mutated.base_name(), original_trait.base_name())
 
 
 if __name__ == '__main__':

@@ -51,16 +51,30 @@ class CreatureRenderer:
             screen: Pygame surface to draw on
             battle: The spatial battle containing creatures
         """
+        # Determine LOD level based on creature count
+        creature_count = len(battle.creatures)
+        lod_level = 0  # High detail
+        
+        if creature_count > 100:
+            lod_level = 2  # Low detail (circles only)
+        elif creature_count > 40:
+            lod_level = 1  # Medium detail (simplified bars)
+            
+        # Get mouse position for hover details
+        mouse_pos = pygame.mouse.get_pos()
+        
         # Render all creatures
         for creature in battle.creatures:
             if creature.is_alive():
-                self._render_creature(screen, creature, battle)
+                self._render_creature(screen, creature, battle, lod_level, mouse_pos)
     
     def _render_creature(
         self,
         screen: pygame.Surface,
         creature: BattleCreature,
-        battle: SpatialBattle
+        battle: SpatialBattle,
+        lod_level: int = 0,
+        mouse_pos: tuple = (0, 0)
     ):
         """Render a single creature."""
         # Get screen position
@@ -79,8 +93,18 @@ class CreatureRenderer:
         pygame.draw.circle(screen, color, screen_pos, self.radius)
         pygame.draw.circle(screen, outline_color, screen_pos, self.radius, 2)
         
-        # Draw direction indicator (velocity)
-        if creature.spatial.velocity.magnitude() > 0.1:
+        # Check for hover (override LOD)
+        # Simple distance check for hover
+        dx = screen_pos[0] - mouse_pos[0]
+        dy = screen_pos[1] - mouse_pos[1]
+        is_hovered = (dx*dx + dy*dy) < (self.radius + 5)**2
+        
+        # Force high detail if hovered or selected (if we had selection)
+        if is_hovered:
+            lod_level = 0
+        
+        # Draw direction indicator (velocity) - Skip in LOD 2
+        if lod_level < 2 and creature.spatial.velocity.magnitude() > 0.1:
             vel_norm = creature.spatial.velocity.normalized()
             end_x = screen_pos[0] + vel_norm.x * (self.radius + 10)
             end_y = screen_pos[1] + vel_norm.y * (self.radius + 10)
@@ -92,30 +116,34 @@ class CreatureRenderer:
                 3
             )
         
-        # Draw HP bar above creature
-        self._draw_hp_bar(screen, creature, screen_pos)
+        # Draw HP bar above creature - Simplified in LOD 1, Skip in LOD 2
+        if lod_level < 2:
+            self._draw_hp_bar(screen, creature, screen_pos, simplified=(lod_level == 1))
         
-        # Draw hunger bar below HP bar
-        self._draw_hunger_bar(screen, creature, screen_pos)
+        # Draw hunger bar below HP bar - Skip in LOD 1+
+        if lod_level < 1:
+            self._draw_hunger_bar(screen, creature, screen_pos)
         
-        # Draw energy bar (if applicable)
-        if hasattr(creature.creature, 'energy') and creature.creature.energy < creature.creature.max_energy:
+        # Draw energy bar (if applicable) - Skip in LOD 1+
+        if lod_level < 1 and hasattr(creature.creature, 'energy') and creature.creature.energy < creature.creature.max_energy:
             self._draw_energy_bar(screen, creature, screen_pos)
         
-        # Draw creature name below
-        self._draw_name(screen, creature, screen_pos)
+        # Draw creature name below - Skip in LOD 1+
+        if lod_level < 1:
+            self._draw_name(screen, creature, screen_pos)
         
-        # Draw combat engagement indicator
+        # Draw combat engagement indicator - Simplified in LOD 2 (just color, no pulse ring)
         if creature.combat_engaged:
-            # Draw a pulsing ring around creatures in active combat
-            import time
-            pulse = (math.sin(time.time() * 5) + 1) / 2  # Pulse between 0 and 1
-            ring_radius = self.radius + 5 + int(pulse * 3)
-            ring_color = (255, 100, 100) if creature.combat_engaged else (255, 255, 100)
-            pygame.draw.circle(screen, ring_color, screen_pos, ring_radius, 2)
+            if lod_level < 2:
+                # Draw a pulsing ring around creatures in active combat
+                import time
+                pulse = (math.sin(time.time() * 5) + 1) / 2  # Pulse between 0 and 1
+                ring_radius = self.radius + 5 + int(pulse * 3)
+                ring_color = (255, 100, 100) if creature.combat_engaged else (255, 255, 100)
+                pygame.draw.circle(screen, ring_color, screen_pos, ring_radius, 2)
         
-        # Draw target line if creature has a target
-        if creature.target and creature.target.is_alive():
+        # Draw target line if creature has a target - Skip in LOD 2
+        if lod_level < 2 and creature.target and creature.target.is_alive():
             target_screen_pos = self._world_to_screen(
                 creature.target.spatial.position,
                 screen,
@@ -136,13 +164,14 @@ class CreatureRenderer:
         self,
         screen: pygame.Surface,
         creature: BattleCreature,
-        screen_pos: tuple
+        screen_pos: tuple,
+        simplified: bool = False
     ):
         """Draw HP bar above the creature."""
-        bar_width = 40
-        bar_height = 6
+        bar_width = 40 if not simplified else 30
+        bar_height = 6 if not simplified else 4
         bar_x = screen_pos[0] - bar_width // 2
-        bar_y = screen_pos[1] - self.radius - 15
+        bar_y = screen_pos[1] - self.radius - (15 if not simplified else 8)
         
         # Background (gray)
         bg_rect = pygame.Rect(bar_x, bar_y, bar_width, bar_height)
@@ -167,11 +196,12 @@ class CreatureRenderer:
         # Border
         pygame.draw.rect(screen, (200, 200, 200), bg_rect, 1)
         
-        # HP text
-        hp_text = f"{creature.creature.stats.hp}/{creature.creature.stats.max_hp}"
-        text_surface = self._get_cached_text(hp_text, self.stat_font, (255, 255, 255))
-        text_rect = text_surface.get_rect(center=(screen_pos[0], bar_y - 8))
-        screen.blit(text_surface, text_rect)
+        # HP text (skip in simplified mode)
+        if not simplified:
+            hp_text = f"{int(creature.creature.stats.hp)}/{int(creature.creature.stats.max_hp)}"
+            text_surface = self._get_cached_text(hp_text, self.stat_font, (255, 255, 255))
+            text_rect = text_surface.get_rect(center=(screen_pos[0], bar_y - 8))
+            screen.blit(text_surface, text_rect)
     
     def _draw_hunger_bar(
         self,

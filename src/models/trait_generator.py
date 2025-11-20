@@ -42,8 +42,12 @@ BEHAVIORAL_DESCRIPTORS = [
 ]
 
 METABOLIC_DESCRIPTORS = [
-    "Efficient", "Enhanced", "Optimized", "Supercharged", "Refined",
     "Accelerated", "Regulated", "Adaptive", "Balanced", "Vigorous"
+]
+
+ENVIRONMENTAL_DESCRIPTORS = [
+    "Adapted", "Resistant", "Native", "Wild", "Natural",
+    "Hardy", "Rugged", "Attuned", "Weathered", "Acclimated"
 ]
 
 
@@ -95,7 +99,8 @@ class TraitGenerator:
         if category is None:
             category = random.choice([
                 'physical', 'behavioral', 'metabolic', 
-                'ecological', 'offensive', 'defensive', 'utility'
+                'ecological', 'offensive', 'defensive', 'utility',
+                'environmental'
             ])
         
         # Determine rarity
@@ -162,7 +167,8 @@ class TraitGenerator:
         """
         category = random.choice([
             'physical', 'behavioral', 'metabolic', 
-            'ecological', 'offensive', 'defensive'
+            'ecological', 'offensive', 'defensive',
+            'environmental'
         ])
         
         return self.generate_trait(
@@ -216,8 +222,11 @@ class TraitGenerator:
                 descriptor = random.choice(BEHAVIORAL_DESCRIPTORS)
                 noun = random.choice(NOUNS)
                 name = f"{descriptor} {noun}"
-            elif category == 'metabolic':
                 descriptor = random.choice(METABOLIC_DESCRIPTORS)
+                noun = random.choice(NOUNS)
+                name = f"{descriptor} {noun}"
+            elif category == 'environmental':
+                descriptor = random.choice(ENVIRONMENTAL_DESCRIPTORS)
                 noun = random.choice(NOUNS)
                 name = f"{descriptor} {noun}"
             else:
@@ -280,9 +289,13 @@ class TraitGenerator:
                 f"Evolved resilience against threats"
             ],
             'pellet': [
-                f"Unique pellet property affecting nutritional value",
                 f"Environmental adaptation for pellet survival",
                 f"Special characteristic influencing pellet ecology"
+            ],
+            'environmental': [
+                f"Adaptation to specific environmental conditions",
+                f"Survival trait for harsh environments",
+                f"Evolved resilience to environmental factors"
             ]
         }
         
@@ -329,11 +342,15 @@ class TraitGenerator:
             strength = random.uniform(0.95, 1.05)
             speed = random.uniform(min_mod, max_mod)
             defense = random.uniform(0.95, 1.05)
-        elif category == 'metabolic':
             # Metabolic traits provide defensive benefits
             strength = random.uniform(0.95, 1.05)
             speed = random.uniform(0.95, 1.05)
             defense = random.uniform(1.0, max_mod)
+        elif category == 'environmental':
+            # Environmental traits are versatile
+            strength = random.uniform(0.95, 1.05)
+            speed = random.uniform(0.95, 1.05)
+            defense = random.uniform(0.95, 1.05)
         else:
             # Utility/ecological - minimal direct stat impact
             strength = random.uniform(0.98, 1.02)
@@ -382,7 +399,8 @@ class TraitGenerator:
                 'poison_on_hit': random.uniform(0.3, 1.0),
                 'lifesteal': random.uniform(0.1, 0.5),
                 'execute_bonus': random.uniform(0.5, 1.5),
-                'multi_strike': random.randint(2, 3)
+                'multi_strike': random.randint(2, 3),
+                'ambush_predator': random.choice([True, False])
             }
         elif category == 'defensive':
             possible_effects = {
@@ -396,7 +414,11 @@ class TraitGenerator:
                 'aggression_modifier': random.uniform(-0.3, 0.3),
                 'flee_threshold': random.uniform(0.2, 0.7),
                 'exploration_range': random.uniform(1.1, 1.5),
-                'target_preference': random.choice(['weakest', 'strongest', 'nearest', 'random'])
+                'target_preference': random.choice(['weakest', 'strongest', 'nearest', 'random']),
+                'pack_hunter': random.choice([True, False]),
+                'loner_strength': random.choice([True, False]),
+                'scaredy_cat': random.choice([True, False]),
+                'circadian_rhythm': random.choice(['nocturnal', 'diurnal', 'any'])
             }
         elif category == 'metabolic':
             possible_effects = {
@@ -411,6 +433,13 @@ class TraitGenerator:
                 'pellet_selectivity': random.uniform(0.8, 1.5),
                 'toxin_resistance': random.uniform(0.1, 0.5),
                 'symbiotic_bonus': random.uniform(0.05, 0.15)
+            }
+        elif category == 'environmental':
+            possible_effects = {
+                'environmental_resistance': random.uniform(0.1, 0.3),
+                'terrain_affinity': random.choice(['water', 'rocky', 'forest', 'desert', 'marsh', 'grass']),
+                'weather_affinity': random.choice(['clear', 'rainy', 'stormy', 'foggy', 'drought']),
+                'hazard_resistance': random.uniform(0.2, 0.5)
             }
         else:
             possible_effects = {

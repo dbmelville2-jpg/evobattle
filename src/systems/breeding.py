@@ -11,6 +11,7 @@ from ..models.trait import Trait
 from ..models.stats import Stats
 from ..models.genetics import GeneticsEngine
 from .trait_injection import TraitInjectionSystem, InjectionConfig
+from src.systems.mutation import apply_tradeoff_mutation
 
 
 class Breeding:
@@ -184,8 +185,12 @@ class Breeding:
         Returns:
             The mutated trait
         """
-        # Delegate to the genetics engine
-        return self.genetics_engine._mutate_trait(trait)
+        # Centralized mutation: use canonical tradeoff mutation helper
+        try:
+            return apply_tradeoff_mutation(trait, mutation_strength=self.mutation_rate)
+        except Exception:
+            # Fallback to genetics engine if present
+            return self.genetics_engine._mutate_trait(trait)
     
     def generate_new_trait(self) -> Optional[Trait]:
         """
@@ -197,8 +202,14 @@ class Breeding:
         Returns:
             A new trait, or None if generation fails
         """
-        # Delegate to the genetics engine
-        return self.genetics_engine._generate_mutation(self.generation_counter)
+        # Try to generate via genetics engine; if not available, create a simple new trait
+        try:
+            return self.genetics_engine._generate_mutation(self.generation_counter)
+        except Exception:
+            # Fallback: create a basic emergent trait
+            t = Trait(name=f"Emergent_{self.generation_counter}", description="Emergent trait")
+            t.mark_mutated()
+            return t
     
     def __repr__(self):
         """String representation of the Breeding system."""

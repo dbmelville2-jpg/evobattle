@@ -126,9 +126,9 @@ class GrassGrowthSystem:
         enable_symbiotic_bonus: bool = True,
         # New tuning knobs:
         baseline_growth_multiplier: float = 0.1,
-        global_growth_scale: float = 0.8,
-        pollination_chance: float = 0.02,
-        pollination_cooldown: float = 8.0
+        global_growth_scale: float = 0.7,
+        pollination_chance: float = 0.01,
+        pollination_cooldown: float = 10.0
     ):
         """
         Initialize the grass growth system.

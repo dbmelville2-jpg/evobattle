@@ -10,6 +10,7 @@ This module defines a comprehensive trait library with:
 
 from typing import Dict, Any
 from .trait import Trait
+from .environmental_traits import ALL_ENVIRONMENTAL_TRAITS
 
 
 # ============================================================================
@@ -27,7 +28,12 @@ TIMID_TRAIT = Trait(
     dominance="recessive",
     interaction_effects={
         'flee_threshold': 0.6,  # Flee when HP < 60%
-        'aggression_penalty': -0.3
+        'aggression_penalty': -0.3,
+        # Negative trade-off: misses attacking opportunities and may be targeted when fleeing
+        'reduced_engagement_time': 0.8,  # spends less time fighting/gathering
+        'vulnerability_while_fleeing': 1.15,
+        'scaredy_cat': True,  # New behavior: flees very easily
+        'panic_speed_boost': 1.3  # Run faster when panicking
     }
 )
 
@@ -43,7 +49,10 @@ AGGRESSIVE_TRAIT = Trait(
     interaction_effects={
         'attack_bonus': 0.15,
         'flee_threshold': 0.2,  # Only flee when HP < 20%
-        'target_preference': 'strongest'
+        'target_preference': 'strongest',
+        # Negative trade-off: takes more damage when overcommitting
+        'reckless_exposure': True,
+        'damage_taken_multiplier': 1.15
     }
 )
 
@@ -58,7 +67,10 @@ CURIOUS_TRAIT = Trait(
     dominance="codominant",
     interaction_effects={
         'exploration_range': 1.3,
-        'resource_detection': 1.25
+        'resource_detection': 1.25,
+        # Negative trade-off: more likely to wander into danger or miss objectives
+        'distraction_chance': 0.25,
+        'predation_risk_multiplier': 1.2
     }
 )
 
@@ -73,7 +85,10 @@ CAUTIOUS_TRAIT = Trait(
     dominance="recessive",
     interaction_effects={
         'retreat_early': True,
-        'pellet_selectivity': 1.2  # More selective about food
+        'pellet_selectivity': 1.2,  # More selective about food
+        # Negative trade-off: misses out on some resources / opportunities
+        'resource_gather_penalty': 0.85,
+        'slower_engagement_rate': 0.9
     }
 )
 
@@ -88,7 +103,10 @@ BOLD_TRAIT = Trait(
     dominance="dominant",
     interaction_effects={
         'no_retreat': True,
-        'critical_hit_chance': 1.2
+        'critical_hit_chance': 1.2,
+        # Negative trade-off: higher chance to suffer heavy damage
+        'overexposure_damage_multiplier': 1.25,
+        'injury_risk_increase': True
     }
 )
 
@@ -103,7 +121,12 @@ SOCIAL_TRAIT = Trait(
     dominance="codominant",
     interaction_effects={
         'group_bonus': 1.15,
-        'sharing_willingness': 0.8
+        'sharing_willingness': 0.8,
+        # Negative trade-off: individual resource gain reduced
+        'resource_share_penalty': 0.9,
+        'vulnerability_when_group_split': 1.1,
+        'pack_hunter': True,  # New behavior: bonus when near allies
+        'pack_coordination': 1.2
     }
 )
 
@@ -118,7 +141,12 @@ SOLITARY_TRAIT = Trait(
     dominance="recessive",
     interaction_effects={
         'group_penalty': 0.9,
-        'solo_bonus': 1.2
+        'solo_bonus': 1.2,
+        # Negative trade-off: lacks group support and suffers against coordinated foes
+        'lack_of_support_multiplier': 0.85,
+        'reduced_rescue_chance': 0.6,
+        'loner_strength': True,  # New behavior: bonus when alone
+        'isolation_resilience': 1.3
     }
 )
 
@@ -137,7 +165,10 @@ ARMORED_TRAIT = Trait(
     dominance="dominant",
     interaction_effects={
         'damage_reduction': 0.25,
-        'blunt_resistance': 1.5
+        'blunt_resistance': 1.5,
+        # Negative trade-off: heavier armor increases stamina costs and reduces agility
+        'stamina_drain_multiplier': 1.25,
+        'reduced_maneuverability': 0.85
     }
 )
 
@@ -152,7 +183,10 @@ SWIFT_TRAIT = Trait(
     dominance="dominant",
     interaction_effects={
         'dodge_chance': 1.4,
-        'first_strike': True
+        'first_strike': True,
+        # Negative trade-off: lighter frame means less impact resistance
+        'reduced_armor_effectiveness': 0.8,
+        'vulnerability_to_heavy_hits': 1.2
     }
 )
 
@@ -167,7 +201,10 @@ REGENERATIVE_TRAIT = Trait(
     dominance="recessive",
     interaction_effects={
         'hp_regen_rate': 0.02,  # 2% HP per tick
-        'recovery_speed': 1.5
+        'recovery_speed': 1.5,
+        # Negative trade-off: higher metabolic demands
+        'food_requirement_multiplier': 1.3,
+        'reduced_peak_performance_duration': 0.9
     }
 )
 
@@ -182,7 +219,10 @@ VENOMOUS_TRAIT = Trait(
     dominance="dominant",
     interaction_effects={
         'poison_on_hit': 0.3,  # 30% chance
-        'poison_damage': 5
+        'poison_damage': 5,
+        # Negative trade-off: making/holding venom costs energy and slows growth
+        'energetic_cost_multiplier': 1.2,
+        'reduced_reproduction_rate': 0.85
     }
 )
 
@@ -197,7 +237,10 @@ CAMOUFLAGED_TRAIT = Trait(
     dominance="recessive",
     interaction_effects={
         'detection_range': 0.7,  # Harder to spot
-        'ambush_bonus': 1.3
+        'ambush_bonus': 1.3,
+        # Negative trade-off: reduced sensing of allies and less group awareness
+        'reduced_group_awareness': 0.85,
+        'vulnerability_in_open_areas': 1.25
     }
 )
 
@@ -213,7 +256,10 @@ KEEN_SENSES_TRAIT = Trait(
     interaction_effects={
         'threat_detection': 1.4,
         'food_detection': 1.5,
-        'pellet_quality_sense': True
+        'pellet_quality_sense': True,
+        # Negative trade-off: can be overloaded by stimuli
+        'sensory_overload_chance': 0.15,
+        'stun_chance_from_loud_events': 0.1
     }
 )
 
@@ -228,7 +274,10 @@ POWERFUL_TRAIT = Trait(
     dominance="dominant",
     interaction_effects={
         'critical_damage': 1.5,
-        'knockback': True
+        'knockback': True,
+        # Negative trade-off: slower recovery and higher stamina use
+        'stamina_recovery_multiplier': 0.8,
+        'higher_energy_consumption': 1.3
     }
 )
 
@@ -248,7 +297,9 @@ BERSERKER_TRAIT = Trait(
     interaction_effects={
         'attack_bonus_below_30_hp': 1.0,  # +100% attack when below 30% HP
         'cannot_retreat': True,
-        'rage_threshold': 0.3
+        'rage_threshold': 0.3,
+        # Negative trade-off: takes extra damage while berserk
+        'damage_taken_while_raging_multiplier': 1.4
     }
 )
 
@@ -264,7 +315,9 @@ EXECUTIONER_TRAIT = Trait(
     interaction_effects={
         'execute_bonus': 1.5,  # +150% damage to targets below 40% HP
         'execute_threshold': 0.4,
-        'immune_to_fear': True
+        'immune_to_fear': True,
+        # Negative trade-off: focused execution style slows recovery between fights
+        'post_execute_recovery_penalty': 0.8
     }
 )
 
@@ -281,7 +334,9 @@ BLOODTHIRSTY_TRAIT = Trait(
         'damage_per_kill': 0.15,  # +15% damage per kill
         'max_kill_stacks': 5,
         'resets_on_battle_end': True,
-        'targets_injured': True
+        'targets_injured': True,
+        # Negative trade-off: bloodlust reduces carefulness, increasing incoming damage
+        'increased_incoming_damage_per_stack': 0.05
     }
 )
 
@@ -297,7 +352,10 @@ BRUTAL_TRAIT = Trait(
     interaction_effects={
         'armor_penetration': 0.5,  # Ignores 50% of target's armor/defense
         'bleed_on_hit': True,
-        'bleed_damage': 3  # Damage over time
+        'bleed_damage': 3,  # Damage over time
+        # Negative trade-off: heavy-hitting attacks are slower and easier to avoid
+        'attack_speed_penalty': 0.85,
+        'predictable_strike_pattern': True
     }
 )
 
@@ -314,7 +372,12 @@ ASSASSIN_TRAIT = Trait(
         'ambush_damage': 2.0,  # +200% damage on first strike/ambush
         'counter_vulnerability': 2.0,  # Receives double damage if counter-attacked
         'stealth_movement': True,
-        'first_strike': True
+        'first_strike': True,
+        # Negative trade-off: exposed assassins suffer morale penalties when revealed
+        'reveal_penalty_duration': 3,
+        'reduced_effectiveness_in_group_fight': 0.7,
+        'ambush_predator': True,  # New behavior: bonus on first hit
+        'stealth_regen': 1.5  # Regenerate energy faster while hidden
     }
 )
 
@@ -331,7 +394,10 @@ APEX_PREDATOR_TRAIT = Trait(
         'stats_per_unique_kill': 0.2,  # +20% stats per unique strain killed
         'fear_aura': True,
         'fear_radius': 50.0,
-        'prey_tracking': True
+        'prey_tracking': True,
+        # Negative trade-off: high energy demands and reduced reproduction
+        'energy_drain_per_kill': 1.2,
+        'reduced_reproductive_success': 0.7
     }
 )
 
@@ -348,7 +414,10 @@ RECKLESS_FURY_TRAIT = Trait(
         'self_damage_chance': 0.2,  # 20% chance to hurt self on each attack
         'self_damage_amount': 5,
         'cannot_block': True,
-        'cannot_parry': True
+        'cannot_parry': True,
+        # Negative trade-off: long recovery and high injury likelihood
+        'post_combat_debuff_duration': 5,
+        'long_term_injury_risk': 0.2
     }
 )
 
@@ -365,7 +434,10 @@ TOXIC_TRAIT = Trait(
         'poison_on_hit': 1.0,  # 100% chance to poison
         'poison_damage': 2,  # Damage per tick
         'poison_stacks': 5,  # Max stacks
-        'healing_reduction': 0.3  # Reduced healing received
+        'healing_reduction': 0.3,  # Reduced healing received
+        # Negative trade-off: poison production can contaminate allies or self
+        'friendly_fire_poison_risk': True,
+        'detox_energy_cost_multiplier': 1.2
     }
 )
 
@@ -381,7 +453,10 @@ FRENZIED_TRAIT = Trait(
     interaction_effects={
         'multi_strike': 3,  # Up to 3 attacks per turn
         'attack_speed_multiplier': 2.5,
-        'cannot_use_defensive_abilities': True
+        'cannot_use_defensive_abilities': True,
+        # Negative trade-off: exhaustion after frenzied activity
+        'post_frenzy_exhaustion_multiplier': 0.6,
+        'increased_miss_chance_when_exhausted': 0.15
     }
 )
 
@@ -397,7 +472,10 @@ VAMPIRIC_TRAIT = Trait(
     interaction_effects={
         'lifesteal': 0.5,  # Heals for 50% of damage dealt
         'overheal_shield': True,
-        'overheal_max': 0.3  # Can overheal up to 30% max HP as shield
+        'overheal_max': 0.3,  # Can overheal up to 30% max HP as shield
+        # Negative trade-off: less effective against non-living or shielded targets
+        'ineffective_against_shields': True,
+        'recovery_dependency_on_damage_dealt': True
     }
 )
 
@@ -417,7 +495,10 @@ SCAVENGER_TRAIT = Trait(
     interaction_effects={
         'corpse_nutrition_bonus': 1.5,
         'corpse_preference': True,
-        'toxin_resistance': 1.3
+        'toxin_resistance': 1.3,
+        # Negative trade-off: higher disease/toxin exposure risk
+        'disease_risk_multiplier': 1.6,
+        'lower_social_acceptance': 0.8
     }
 )
 
@@ -433,7 +514,10 @@ POLLINATOR_TRAIT = Trait(
     interaction_effects={
         'pellet_reproduction_boost': 1.4,
         'symbiotic_bonus': True,
-        'plant_pellet_preference': True
+        'plant_pellet_preference': True,
+        # Negative trade-off: spends more time feeding and is less mobile
+        'movement_penalty_while_pollinating': 0.8,
+        'exposure_to_predators_while_pollinating': 1.25
     }
 )
 
@@ -448,7 +532,10 @@ PARASITE_TRAIT = Trait(
     dominance="dominant",
     interaction_effects={
         'lifesteal': 0.15,  # Steal 15% of damage as HP
-        'attach_on_hit': 0.2  # 20% chance to attach
+        'attach_on_hit': 0.2,  # 20% chance to attach
+        # Negative trade-off: heavy dependence on a host and vulnerability if detached
+        'host_dependency': True,
+        'vulnerability_when_detached_multiplier': 1.4
     }
 )
 
@@ -464,7 +551,10 @@ SYMBIOTIC_TRAIT = Trait(
     interaction_effects={
         'pellet_aura_bonus': 1.2,
         'beneficial_pellets': True,
-        'mutual_benefit': True
+        'mutual_benefit': True,
+        # Negative trade-off: dependence on specific pellet types reduces flexibility
+        'dependence_penalty_if_pellet_absent': 0.75,
+        'reduced_survivability_in_barren_areas': 0.8
     }
 )
 
@@ -480,7 +570,10 @@ PREDATOR_TRAIT = Trait(
     interaction_effects={
         'hunt_bonus': 1.3,
         'carnivore': True,
-        'track_prey': True
+        'track_prey': True,
+        # Negative trade-off: more visible/tracked by other predators and human-like forces
+        'higher_visibility_multiplier': 1.15,
+        'increased_energy_needs': 1.2
     }
 )
 
@@ -496,7 +589,10 @@ HERBIVORE_TRAIT = Trait(
     interaction_effects={
         'plant_nutrition_bonus': 1.4,
         'cannot_eat_meat': True,
-        'plant_pellet_detection': 1.5
+        'plant_pellet_detection': 1.5,
+        # Negative trade-off: more attractive to predators and limited diet flexibility
+        'predator_targeting_multiplier': 1.25,
+        'reduced_diet_flexibility': 0.8
     }
 )
 
@@ -511,7 +607,9 @@ OMNIVORE_TRAIT = Trait(
     dominance="codominant",
     interaction_effects={
         'varied_diet_bonus': 1.2,
-        'nutrition_efficiency': 1.15
+        'nutrition_efficiency': 1.15,
+        # Negative trade-off: less specialized efficiency compared to specialists
+        'specialist_efficiency_penalty': 0.95
     }
 )
 
@@ -526,7 +624,44 @@ TOXIN_RESISTANT_TRAIT = Trait(
     dominance="dominant",
     interaction_effects={
         'toxin_damage_reduction': 0.6,  # 40% less damage
-        'can_eat_toxic': True
+        'can_eat_toxic': True,
+        # Negative trade-off: metabolic cost for maintaining resistance
+        'metabolic_cost_multiplier': 1.15,
+        'slower_growth_in_clean_environments': 0.9
+    }
+)
+
+NOCTURNAL_TRAIT = Trait(
+    name="Nocturnal",
+    description="Active at night, rests during the day",
+    trait_type="behavioral",
+    strength_modifier=1.05,
+    speed_modifier=1.1,
+    defense_modifier=1.0,
+    rarity="common",
+    dominance="codominant",
+    interaction_effects={
+        'night_vision': True,
+        'day_sluggishness': 0.8,
+        'night_activity_bonus': 1.2,
+        'circadian_rhythm': 'nocturnal'
+    }
+)
+
+DIURNAL_TRAIT = Trait(
+    name="Diurnal",
+    description="Active during the day, rests at night",
+    trait_type="behavioral",
+    strength_modifier=1.05,
+    speed_modifier=1.0,
+    defense_modifier=1.05,
+    rarity="common",
+    dominance="codominant",
+    interaction_effects={
+        'sunlight_affinity': True,
+        'night_fear': True,
+        'day_activity_bonus': 1.2,
+        'circadian_rhythm': 'diurnal'
     }
 )
 
@@ -616,7 +751,10 @@ TOXIC_DEFENSE_PELLET_TRAIT = PelletTrait(
     dominance="dominant",
     interaction_effects={
         'damage_on_consumption': 10,
-        'discourages_predation': True
+        'discourages_predation': True,
+        # Negative trade-off: attracts specialized scavengers and decomposers
+        'attracts_detritivores': True,
+        'reduced_spread_by_consumers': 0.85
     }
 )
 
@@ -627,7 +765,11 @@ FAST_GROWING_PELLET_TRAIT = PelletTrait(
     growth_modifier=1.8,
     nutritional_modifier=0.9,
     rarity="common",
-    dominance="dominant"
+    dominance="dominant",
+    interaction_effects={
+        # Negative trade-off: lower per-item nutrition due to rapid growth
+        'lower_nutrition_per_unit': 0.9
+    }
 )
 
 ATTRACTIVE_PELLET_TRAIT = PelletTrait(
@@ -639,7 +781,9 @@ ATTRACTIVE_PELLET_TRAIT = PelletTrait(
     dominance="codominant",
     interaction_effects={
         'attract_creatures': True,
-        'preferred_food': True
+        'preferred_food': True,
+        # Negative trade-off: high predation pressure
+        'higher_predation_pressure': 1.4
     }
 )
 
@@ -653,7 +797,9 @@ REPELLENT_PELLET_TRAIT = PelletTrait(
     dominance="dominant",
     interaction_effects={
         'repel_creatures': True,
-        'avoid_radius': 5.0
+        'avoid_radius': 5.0,
+        # Negative trade-off: slower spread and fewer dispersers
+        'reduced_dispersal_rate': 0.7
     }
 )
 
@@ -667,7 +813,9 @@ MEDICINAL_PELLET_TRAIT = PelletTrait(
     dominance="recessive",
     interaction_effects={
         'heal_on_consumption': 15,
-        'cure_poison': True
+        'cure_poison': True,
+        # Negative trade-off: slower reproduction due to energy invested in medicinal compounds
+        'reduced_reproduction_rate': 0.8
     }
 )
 
@@ -680,7 +828,9 @@ SYMBIOTIC_PELLET_TRAIT = PelletTrait(
     dominance="codominant",
     interaction_effects={
         'creature_proximity_bonus': 1.4,
-        'mutual_benefit': True
+        'mutual_benefit': True,
+        # Negative trade-off: vulnerable if creatures leave the area
+        'decline_if_creatures_absent': 0.6
     }
 )
 
@@ -694,7 +844,9 @@ HARDY_PELLET_TRAIT = PelletTrait(
     dominance="recessive",
     interaction_effects={
         'lifespan_multiplier': 2.0,
-        'environmental_resistance': True
+        'environmental_resistance': True,
+        # Negative trade-off: slower reproduction or spread
+        'reduced_spread_rate': 0.7
     }
 )
 
@@ -717,7 +869,7 @@ ALL_CREATURE_TRAITS = [
     # Ecological
     SCAVENGER_TRAIT, POLLINATOR_TRAIT, PARASITE_TRAIT, SYMBIOTIC_TRAIT,
     PREDATOR_TRAIT, HERBIVORE_TRAIT, OMNIVORE_TRAIT, TOXIN_RESISTANT_TRAIT
-]
+] + list(ALL_ENVIRONMENTAL_TRAITS)
 
 # All pellet traits
 ALL_PELLET_TRAITS = [

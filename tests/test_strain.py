@@ -3,12 +3,14 @@ Unit tests for genetic strain/lineage system.
 """
 
 import unittest
+import random
 from src.systems.breeding import Breeding
 from src.systems.population import PopulationManager
 from src.models.creature import Creature, CreatureType
 from src.models.stats import Stats
 from src.models.trait import Trait
 from src.models.lineage import Lineage
+from src.systems.mutation import apply_tradeoff_mutation
 
 
 class TestStrainInheritance(unittest.TestCase):
@@ -16,6 +18,8 @@ class TestStrainInheritance(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
+        # deterministic tests
+        random.seed(42)
         self.breeding = Breeding(mutation_rate=0.1)
         
         warrior_type = CreatureType(
@@ -59,6 +63,7 @@ class TestStrainInheritance(unittest.TestCase):
         """Test that offspring from same strain parents usually inherit the strain."""
         # Run multiple times since there's a small mutation chance
         offspring_strains = []
+        random.seed(42)
         for _ in range(10):
             offspring = self.breeding.breed(self.parent1, self.parent2)
             if offspring:
@@ -99,6 +104,8 @@ class TestTraitMutation(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
+        # deterministic tests
+        random.seed(42)
         self.breeding = Breeding(mutation_rate=0.3)  # Higher rate for testing
         
         warrior_type = CreatureType(
@@ -134,6 +141,7 @@ class TestTraitMutation(unittest.TestCase):
         """Test that traits can be lost through mutation."""
         # Breed many times and check if any offspring lose traits
         offspring_list = []
+        random.seed(123)
         for _ in range(20):
             offspring = self.breeding.breed(self.parent1, self.parent2)
             if offspring:
@@ -144,9 +152,8 @@ class TestTraitMutation(unittest.TestCase):
         lost_trait_count = 0
         
         for offspring in offspring_list:
-            offspring_trait_names = {t.name for t in offspring.traits}
-            # Remove mutated markers
-            offspring_trait_names = {name.replace('+', '') for name in offspring_trait_names}
+            # Use canonical base_name() so display markers don't affect logic
+            offspring_trait_names = {t.base_name() for t in offspring.traits}
             
             missing_traits = parent_trait_names - offspring_trait_names
             if missing_traits:
@@ -159,6 +166,7 @@ class TestTraitMutation(unittest.TestCase):
         """Test that new traits can be added through mutation."""
         # Breed many times and check if any offspring gain new traits
         offspring_list = []
+        random.seed(222)
         for _ in range(30):
             offspring = self.breeding.breed(self.parent1, self.parent2)
             if offspring:
@@ -170,8 +178,7 @@ class TestTraitMutation(unittest.TestCase):
         
         for offspring in offspring_list:
             for trait in offspring.traits:
-                # Strip mutation markers
-                base_name = trait.name.replace('+', '')
+                base_name = trait.base_name()
                 if base_name not in parent_trait_names:
                     new_trait_count += 1
                     break
@@ -186,6 +193,27 @@ class TestTraitMutation(unittest.TestCase):
         # Should return a trait
         self.assertIsInstance(new_trait, Trait)
         self.assertIsNotNone(new_trait.name)
+    
+    def test_tradeoff_mutation_changes_stats(self):
+        """Ensure tradeoff mutation increases one stat and decreases another."""
+        t = Trait(name="Balance", strength_modifier=1.0, speed_modifier=1.0, defense_modifier=1.0)
+        # deterministic mutation
+        random.seed(7)
+        mutated = apply_tradeoff_mutation(t, mutation_strength=0.2, force_tradeoff=True)
+
+        # At least one modifier should increase and one should decrease
+        inc = 0
+        dec = 0
+        for attr in ('strength_modifier', 'speed_modifier', 'defense_modifier'):
+            orig = getattr(t, attr)
+            new = getattr(mutated, attr)
+            if new > orig:
+                inc += 1
+            elif new < orig:
+                dec += 1
+
+        self.assertGreater(inc, 0)
+        self.assertGreater(dec, 0)
 
 
 class TestLineageModel(unittest.TestCase):

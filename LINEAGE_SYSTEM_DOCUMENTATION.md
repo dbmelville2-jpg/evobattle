@@ -516,3 +516,22 @@ The Genetic Lineage System transforms EvoBattle into a dynamic evolutionary simu
 - Players observe emergence and extinction of genetic families
 
 This creates emergent gameplay where successful strategies naturally spread through the population while unsuccessful ones die out, all visualized through the color spectrum of the arena.
+
+# Lineage System Documentation
+
+## Mutation behavior
+
+The lineage system now uses a canonical trade-off mutation behavior when traits mutate (used by both Breeding and Evolution systems).
+
+Key points:
+
+- Mutations produce trade-offs: one numeric modifier (strength, speed, defense) is increased while another is decreased by a fractional amount. This makes mutated traits meaningful (they're not strictly better).
+- Mutations are implemented centrally in `src/systems/mutation.py` via `apply_tradeoff_mutation(trait, mutation_strength, force_tradeoff)`.
+- The original `Trait` object is not modified; the mutation helper returns a new `Trait` instance with `mutated=True` and a visual '+' appended to `name` for display only.
+- Use `Trait.base_name()` to get the canonical name without display markers and `Trait.is_mutated()` to check mutation state in logic.
+- Provenance metadata (`TraitProvenance`) is updated on mutated traits to record source and increment `mutation_count`.
+
+Backward compatibility:
+
+- Existing code that relied on string matching (e.g., searching for "Mutated" or stripping `+`) should migrate to using `Trait.base_name()` and `Trait.is_mutated()`.
+- Display markers are cosmetic only; logic should rely on the `mutated` flag / `base_name()`.

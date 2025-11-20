@@ -36,6 +36,8 @@ class GeneticsEngine:
         """
         self.mutation_rate = mutation_rate
         self.generation_counter = 0
+        self.MAX_TRAITS = 8
+        self.SOFT_CAP_TRAITS = 5
     
     def combine_traits(
         self,
@@ -70,10 +72,26 @@ class GeneticsEngine:
         # Get all unique trait names from both parents
         all_trait_names = set(p1_traits.keys()) | set(p2_traits.keys())
         
+        # Soft cap check - if parents have many traits, inheritance becomes harder
+        total_parent_traits = len(p1_traits) + len(p2_traits)
+        avg_traits = total_parent_traits / 2
+        
+        # Probability to drop a trait increases as we go over the soft cap
+        drop_chance_base = 0.0
+        if avg_traits > self.SOFT_CAP_TRAITS:
+            # 10% chance to drop per trait over cap
+            drop_chance_base = (avg_traits - self.SOFT_CAP_TRAITS) * 0.1
+            drop_chance_base = min(drop_chance_base, 0.5)  # Cap drop chance at 50%
+        
         for trait_name in all_trait_names:
+            # Apply drop chance for non-essential traits
+            if random.random() < drop_chance_base:
+                continue
+                
             p1_has = trait_name in p1_traits
             p2_has = trait_name in p2_traits
             
+            trait = None
             if p1_has and p2_has:
                 # Both parents have this trait - blend or express based on dominance
                 trait = self._combine_same_trait(
@@ -81,15 +99,18 @@ class GeneticsEngine:
                     p2_traits[trait_name],
                     generation
                 )
-                if trait:
-                    inherited_traits.append(trait)
-            
             elif p1_has or p2_has:
                 # Only one parent has this trait
                 source_trait = p1_traits[trait_name] if p1_has else p2_traits[trait_name]
                 trait = self._inherit_single_trait(source_trait, generation)
-                if trait:
-                    inherited_traits.append(trait)
+            
+            if trait:
+                # Chance for trait modification (evolutionary shift)
+                # Instead of just stats changing, the trait itself changes nature
+                if random.random() < self.mutation_rate * 0.2:  # 20% of mutation rate
+                    trait = self._modify_trait_nature(trait, generation)
+                
+                inherited_traits.append(trait)
         
         # Apply mutations - may add new traits
         if random.random() < self.mutation_rate * 0.3:
@@ -97,6 +118,13 @@ class GeneticsEngine:
             if new_trait and new_trait.name not in all_trait_names:
                 inherited_traits.append(new_trait)
         
+        # Enforce Hard Cap
+        if len(inherited_traits) > self.MAX_TRAITS:
+            # Shuffle to randomly drop traits, but prefer keeping newer mutations or higher rarity
+            # For now, just random shuffle and slice
+            random.shuffle(inherited_traits)
+            inherited_traits = inherited_traits[:self.MAX_TRAITS]
+            
         return inherited_traits
     
     def _combine_same_trait(
@@ -358,6 +386,58 @@ class GeneticsEngine:
         
         return mutated
     
+    def _modify_trait_nature(self, trait: Trait, generation: int) -> Trait:
+        """
+        Modify the fundamental nature of a trait (evolutionary shift).
+        
+        This can flip a trait (Aggressive <-> Timid) or shift it to a related
+        variant (Aggressive -> Berserker).
+        
+        Args:
+            trait: The trait to modify
+            generation: Current generation
+            
+        Returns:
+            Modified trait
+        """
+        from .expanded_traits import (
+            AGGRESSIVE_TRAIT, TIMID_TRAIT, BOLD_TRAIT, CAUTIOUS_TRAIT,
+            SOCIAL_TRAIT, SOLITARY_TRAIT, BERSERKER_TRAIT, EXECUTIONER_TRAIT,
+            ARMORED_TRAIT, SWIFT_TRAIT
+        )
+        
+        # Define modification pathways
+        # key: trait name, value: list of possible evolutions/flips
+        pathways = {
+            "Aggressive": [TIMID_TRAIT, BERSERKER_TRAIT, BOLD_TRAIT],
+            "Timid": [AGGRESSIVE_TRAIT, CAUTIOUS_TRAIT],
+            "Bold": [CAUTIOUS_TRAIT, AGGRESSIVE_TRAIT, EXECUTIONER_TRAIT],
+            "Cautious": [BOLD_TRAIT, TIMID_TRAIT],
+            "Social": [SOLITARY_TRAIT],
+            "Solitary": [SOCIAL_TRAIT],
+            "Armored": [SWIFT_TRAIT],  # Trade armor for speed
+            "Swift": [ARMORED_TRAIT],  # Trade speed for armor
+        }
+        
+        base_name = trait.base_name()
+        if base_name in pathways:
+            # Pick a new form
+            new_template = random.choice(pathways[base_name])
+            
+            # Create new trait based on template but keeping some history
+            new_trait = new_template.copy()
+            new_trait.provenance = TraitProvenance(
+                source_type='modified',
+                parent_traits=[trait.name],
+                generation=generation,
+                timestamp=time.time(),
+                mutation_count=trait.provenance.mutation_count + 1
+            )
+            new_trait.description = f"Evolved from {trait.name}: {new_template.description}"
+            return new_trait
+            
+        return trait
+
     def _generate_mutation(self, generation: int) -> Optional[Trait]:
         """
         Generate a completely new trait through mutation.

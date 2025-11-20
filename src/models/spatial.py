@@ -159,16 +159,16 @@ class SpatialEntity:
         """Check if another entity is within a specific range."""
         return self.distance_to(other) <= range_distance
     
-    def apply_separation_force(self, other: 'SpatialEntity', strength: float = 2.0):
+    def calculate_separation_force(self, other: 'SpatialEntity', strength: float = 2.0) -> Vector2D:
         """
-        Apply a separation force to avoid collision with another entity.
-        
-        This creates a repulsive force when entities get too close, helping
-        them navigate around each other smoothly.
+        Calculate the separation force vector without applying it.
         
         Args:
             other: The other entity to separate from
-            strength: How strong the separation force is (higher = stronger push)
+            strength: How strong the separation force is
+            
+        Returns:
+            Vector2D representing the force
         """
         distance = self.distance_to(other)
         min_distance = self.radius + other.radius
@@ -183,8 +183,25 @@ class SpatialEntity:
             overlap = min_distance - distance
             force_magnitude = (overlap / min_distance) * strength
             
+            return separation_dir * force_magnitude
+            
+        return Vector2D(0, 0)
+
+    def apply_separation_force(self, other: 'SpatialEntity', strength: float = 2.0):
+        """
+        Apply a separation force to avoid collision with another entity.
+        
+        This creates a repulsive force when entities get too close, helping
+        them navigate around each other smoothly.
+        
+        Args:
+            other: The other entity to separate from
+            strength: How strong the separation force is (higher = stronger push)
+        """
+        separation_force = self.calculate_separation_force(other, strength)
+        
+        if separation_force.magnitude() > 0:
             # Apply the force to velocity
-            separation_force = separation_dir * force_magnitude
             self.velocity = self.velocity + separation_force
             
             # Clamp velocity to max speed

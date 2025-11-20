@@ -336,6 +336,12 @@ class Environment:
         self.terrain_grid: Dict[Tuple[int, int], TerrainCell] = {}
         self._initialize_terrain()
         
+        # Biome metadata (set by biome generator)
+        self.biome_name: Optional[str] = None
+        self.biome_description: Optional[str] = None
+        self.biome_difficulty: int = 3
+        self.biome_regions: List = []  # List[BiomeRegion] - avoid circular import
+        
         # Weather change tracking
         self.last_weather_change = time.time()
         self.weather_change_interval = 60.0  # Change weather every 60 seconds
@@ -395,6 +401,25 @@ class Environment:
         col = int(position.x / self.cell_size)
         row = int(position.y / self.cell_size)
         return self.terrain_grid.get((col, row))
+    
+    def get_biome_at_position(self, position: Vector2D):
+        """
+        Get the biome region at a specific position.
+        
+        Args:
+            position: Position to query
+            
+        Returns:
+            BiomeRegion if multi-biome arena, None otherwise
+        """
+        if not self.biome_regions:
+            return None
+        
+        for region in self.biome_regions:
+            if region.contains_position(position):
+                return region
+        
+        return None
     
     def update(self, delta_time: float):
         """

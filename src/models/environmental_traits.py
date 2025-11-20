@@ -235,6 +235,78 @@ ENVIRONMENTAL_MASTER = Trait(
 )
 
 # ===========================
+# FORAGING & RESOURCE TRAITS
+# ===========================
+
+KEEN_FORAGER = Trait(
+    name="Keen Forager",
+    description="Expert at finding food. Detects pellets from 2x distance, +20% movement speed toward food, assesses pellet quality from afar",
+    trait_type="environmental",
+    speed_modifier=1.1,
+    rarity="uncommon"
+)
+
+PICKY_EATER = Trait(
+    name="Picky Eater",
+    description="Selective diet. Only eats high-quality pellets, gets 30% more nutrition from preferred food, completely avoids toxic pellets",
+    trait_type="environmental",
+    rarity="common"
+)
+
+OPPORTUNISTIC_FEEDER = Trait(
+    name="Opportunistic Feeder",
+    description="Eats anything. Consumes any pellet regardless of toxicity, 50% reduced toxicity damage, survives on low-quality food",
+    trait_type="environmental",
+    defense_modifier=1.05,
+    rarity="common"
+)
+
+FOOD_HOARDER = Trait(
+    name="Food Hoarder",
+    description="Remembers food sources. Returns to known pellet locations, defends favorite foraging areas, +10% attack when protecting food",
+    trait_type="environmental",
+    strength_modifier=1.05,
+    rarity="rare"
+)
+
+# ===========================
+# SHELTER & TACTICAL TRAITS
+# ===========================
+
+SHELTER_SEEKER = Trait(
+    name="Shelter Seeker",
+    description="Seeks cover when threatened. Actively finds shelter during storms/danger, +30% defense in forest/rocky terrain",
+    trait_type="environmental",
+    defense_modifier=1.15,
+    rarity="uncommon"
+)
+
+EXPOSED_FIGHTER = Trait(
+    name="Exposed Fighter",
+    description="Prefers open terrain. +20% attack in grass/desert, movement penalty in dense terrain, aggressive in open spaces",
+    trait_type="environmental",
+    strength_modifier=1.1,
+    rarity="uncommon"
+)
+
+BURROW_DWELLER = Trait(
+    name="Burrow Dweller",
+    description="Can hide underground. Gains stealth in marsh/rocky terrain, +25% defense when hiding, escapes danger by burrowing",
+    trait_type="environmental",
+    defense_modifier=1.15,
+    rarity="rare"
+)
+
+TERRAIN_TACTICIAN = Trait(
+    name="Terrain Tactician",
+    description="Strategic positioning. Chooses combat positions based on terrain advantages, uses cover effectively, lures enemies into bad terrain",
+    trait_type="environmental",
+    speed_modifier=1.1,
+    defense_modifier=1.1,
+    rarity="rare"
+)
+
+# ===========================
 # TRAIT COLLECTIONS
 # ===========================
 
@@ -279,12 +351,28 @@ AWARENESS_TRAITS = [
     ENVIRONMENTAL_MASTER,
 ]
 
+FORAGING_TRAITS = [
+    KEEN_FORAGER,
+    PICKY_EATER,
+    OPPORTUNISTIC_FEEDER,
+    FOOD_HOARDER,
+]
+
+TACTICAL_TRAITS = [
+    SHELTER_SEEKER,
+    EXPOSED_FIGHTER,
+    BURROW_DWELLER,
+    TERRAIN_TACTICIAN,
+]
+
 ALL_ENVIRONMENTAL_TRAITS = (
     WEATHER_ADAPTATION_TRAITS +
     TERRAIN_ADAPTATION_TRAITS +
     TIME_ADAPTATION_TRAITS +
     HAZARD_RESISTANCE_TRAITS +
-    AWARENESS_TRAITS
+    AWARENESS_TRAITS +
+    FORAGING_TRAITS +
+    TACTICAL_TRAITS
 )
 
 

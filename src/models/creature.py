@@ -347,7 +347,17 @@ class Creature:
         Returns:
             True if creature has the trait
         """
-        return any(trait.name == trait_name for trait in self.traits)
+        # Compare against the canonical base name so visual mutation markers
+        # (like trailing '+' or '(Mutated)') do not affect membership checks.
+        for trait in self.traits:
+            try:
+                if trait.base_name().lower() == trait_name.lower():
+                    return True
+            except Exception:
+                # Fallback to raw name comparison if trait object is unexpected
+                if trait.name == trait_name:
+                    return True
+        return False
     
     def gain_experience(self, amount: int) -> bool:
         """

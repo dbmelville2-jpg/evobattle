@@ -135,10 +135,21 @@ class GameWindow:
             callback: Function to call with pygame events
         """
         self._input_callbacks.append(callback)
+        try:
+            print(f"Input callback registered. Total callbacks: {len(self._input_callbacks)}")
+        except Exception:
+            pass
     
     def handle_events(self):
         """Process Pygame events (input, window events, etc.)."""
         for event in pygame.event.get():
+            # Debug: log mouse events to verify they arrive
+            try:
+                if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+                    pos = getattr(event, 'pos', None)
+                    print(f"Mouse event: {event.type} pos={pos} callbacks={len(self._input_callbacks)}")
+            except Exception:
+                pass
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.KEYDOWN:
@@ -215,10 +226,23 @@ class GameWindow:
         # Calculate delta time for smooth updates
         last_time = pygame.time.get_ticks()
         
-        while self.running and not battle.is_over:
-            # Handle input
-            self.handle_events()
+        # Register UI input handler if available
+        try:
+            # Prefer method name 'handle_event'
+            if hasattr(ui_components, 'handle_event'):
+                def _ui_callback(event):
+                    try:
+                        ui_components.handle_event(event, battle)
+                    except Exception as e:
+                        print(f"UIComponents.handle_event error: {e}")
+                self.add_input_callback(_ui_callback)
+                _registered_ui_callback = _ui_callback
+            else:
+                _registered_ui_callback = None
+        except Exception:
+            _registered_ui_callback = None
             
+        while self.running and not battle.is_over:
             # Calculate delta time
             current_time = pygame.time.get_ticks()
             delta_time = (current_time - last_time) / 1000.0  # Convert to seconds
@@ -231,12 +255,15 @@ class GameWindow:
             # Clear screen
             self.clear_screen()
             
-            # Render everything
+            # Render everything first so interactive UI geometry (button rects) exists
             arena_renderer.render(self.screen, battle)
             creature_renderer.render(self.screen, battle)
             ui_components.render(self.screen, battle, self.paused)
             event_animator.update(delta_time)
             event_animator.render(self.screen)
+            
+            # Handle input after UI has been rendered so control rects are populated
+            self.handle_events()
             
             # Render FPS counter
             self._render_fps(self.screen, self.get_actual_fps())
@@ -247,6 +274,16 @@ class GameWindow:
         # Show final state for a moment
         if battle.is_over:
             pygame.time.wait(2000)
+        
+        # Unregister UI callback if we registered one
+        try:
+            if '_registered_ui_callback' in locals() and _registered_ui_callback:
+                try:
+                    self._input_callbacks.remove(_registered_ui_callback)
+                except Exception:
+                    pass
+        except Exception:
+            pass
     
     def quit(self):
         """Clean up and quit Pygame."""

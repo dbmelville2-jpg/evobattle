@@ -291,9 +291,10 @@ def example_6_breeding_and_genetics():
     print(f"  Stats: {offspring.base_stats}")
     print(f"  Inherited {len(offspring.traits)} traits:")
     for trait in offspring.traits:
-        print(f"    - {trait.name} ({trait.rarity})")
-        if "Mutated" in trait.name:
-            print(f"      ⚡ MUTATED!")
+        name = trait.base_name()
+        print(f"    - {name} ({trait.rarity})")
+        if trait.is_mutated():
+            print(f"      ⚡ MUTATED! (mods: str={trait.strength_modifier:.3f}, spd={trait.speed_modifier:.3f}, def={trait.defense_modifier:.3f})")
 
 
 def example_7_serialization():

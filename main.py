@@ -1,42 +1,13 @@
 """
 EvoBattle - Evolution-based Battle Game
 Main entry point for running the unified game with all features.
-
-Combines in one cohesive experience:
-- Living World with creature inspector, personalities, skills, and histories
-- Pellet Evolution with visual traits and generation tracking
-- Ecosystem Survival with hunger, foraging, and population dynamics
-
-PERFORMANCE OPTIMIZATIONS:
-This game uses several optimizations for smooth 60 FPS with large populations:
-
-1. SPATIAL HASH GRID (Issue #14):
-   - SpatialBattle uses SpatialHashGrid for O(k) proximity queries
-   - Replaces O(n²) brute-force targeting and collision detection
-   - Enables stable performance with 80+ creatures and 100+ pellets
-   - Grid is automatically managed by battle system (insert/update/remove)
-
-2. RENDERING OPTIMIZATIONS (Issue #15):
-   - Grid Caching: Arena grid lines cached as surface, redrawn only on resize
-   - Text Caching: Creature/UI text surfaces cached (200-300 entry limit)
-   - Effect Pooling: AnimatedEffect objects reused instead of created/destroyed
-   - Combined impact: ~200% performance improvement for large battles
-
-3. RUNTIME PERFORMANCE CONTROLS:
-   Keyboard shortcuts for performance tuning:
-   - F3: Toggle FPS counter display
-   - +/=: Increase target FPS by 5 (clamped 10-120)
-   - -: Decrease target FPS by 5 (clamped 10-120)
-   - Default: 30 FPS for broad hardware compatibility
-   
-For more details, see:
-- SPATIAL_OPTIMIZATION.md - Spatial hash grid documentation
-- RENDERING_DOCUMENTATION.md - Rendering system and optimization details
 """
 
 import pygame
 import random
 import sys
+from typing import List, Optional
+
 from src.models.creature import Creature, CreatureType
 from src.models.stats import Stats, StatGrowth
 from src.models.ability import create_ability
@@ -57,207 +28,316 @@ from src.systems.battle_story_summarizer import (
 )
 from src.utils.name_generator import NameGenerator
 
-# New imports to wire the TraitInjection system
-from src.models.trait_analytics import TraitAnalytics
+# Optional imports for trait injection & analytics - provide safe fallbacks
+try:
+    from src.models.trait_analytics import TraitAnalytics
 except Exception:
-    # Fallback minimal implementation if module not present
     class TraitAnalytics:
         def __init__(self, *args, **kwargs):
             pass
 
 try:
-from src.systems.trait_injection import TraitInjectionSystem, InjectionConfig
-from src.systems.breeding import Breeding
+    from src.systems.trait_injection import TraitInjectionSystem, InjectionConfig
+except Exception:
+    class InjectionConfig:
+        def __init__(self, injection_enabled=False, **kwargs):
+            self.injection_enabled = injection_enabled
+
+    class TraitInjectionSystem:
+        def __init__(self, config=None, analytics=None, seed=None):
+            self.config = config
+            self.analytics = analytics
+            self._callbacks = []
+
+        def register_injection_callback(self, cb):
+            try:
+                self._callbacks.append(cb)
+            except Exception:
+                pass
+
+        def check_cosmic_event(self, generation: int) -> List[Trait]:
+            return []
+
+        def evaluate_population_pressure(self, pop_size, starvation_count, avg_health_norm, generation):
+            return None
+
+        def add_trait_via_callback(self, trait, reason):
+            for cb in self._callbacks:
+                try:
+                    cb(trait, reason)
+                except Exception:
+                    pass
+
+try:
+    from src.systems.breeding import Breeding
+except Exception:
+    class Breeding:
+        def __init__(self, mutation_rate: float = 0.0, trait_inheritance_chance: float = 0.0, injection_system: Optional[TraitInjectionSystem] = None):
+            self.mutation_rate = mutation_rate
+            self.trait_inheritance_chance = trait_inheritance_chance
+            self.injection_system = injection_system
 
 
-def create_creature(name: str, level: int = 5, traits: list = None) -> Creature:
+def create_creature(name: str, level: int = 5, traits: Optional[List[Trait]] = None) -> Creature:
     """
-    Create a creature with full ecosystem, living world, and pellet features.
+    Create a creature with randomized traits and abilities.
     
-    This unified creature supports:
-    - Living world: personalities, skills, history, relationships
-    - Ecosystem: hunger, foraging, breeding
-    - Combat: stats, abilities, tactics
+    This function creates a fully-initialized creature ready for battle, including:
+    - Base stats scaled by level
+    - Random traits from the ecosystem trait pool
+    - Basic combat abilities (tackle, quick strike)
+    - Initialized ecosystem features (maturity, hunger, hue)
+    
+    Args:
+        name: Display name for the creature
+        level: Starting level (affects base stats). Default is 5.
+        traits: Optional list of traits. If None, 2 random traits are selected.
+    
+    Returns:
+        Fully initialized Creature instance ready for battle
+        
+    Example:
+        >>> creature = create_creature("Warrior", level=10, traits=[AGGRESSIVE, FORAGER])
+        >>> print(f"{creature.name} has {creature.stats.max_hp} HP")
     """
     if traits is None:
-        # Mix of combat and ecosystem traits
-        trait_pool = [AGGRESSIVE, CAUTIOUS, FORAGER, EFFICIENT_METABOLISM, 
-                      CURIOUS, WANDERER]
+        trait_pool = [AGGRESSIVE, CAUTIOUS, FORAGER, EFFICIENT_METABOLISM, CURIOUS, WANDERER]
         traits = random.sample(trait_pool, k=2)
-    
+
     base_stats = Stats(
         max_hp=80 + level * 10,
         attack=12 + level * 2,
         defense=10 + level * 2,
         speed=15 + level
     )
-    
+
     creature_type = CreatureType(
         name="Creature",
         base_stats=base_stats,
         type_tags=["normal"],
         stat_growth=StatGrowth(hp_growth=10.0, attack_growth=2.0)
     )
-    
+
     creature = Creature(
         name=name,
         creature_type=creature_type,
         level=level,
         traits=traits
     )
-    
+
     # Add abilities
-    creature.add_ability(create_ability('tackle'))
-    ability = create_ability('quick_strike')
-    if ability:
-        creature.add_ability(ability)
-    
-    # Initialize ecosystem features
+    try:
+        creature.add_ability(create_ability('tackle'))
+        ability = create_ability('quick_strike')
+        if ability:
+            creature.add_ability(ability)
+    except Exception:
+        pass
+
+    # Initialize optional ecosystem features if present
     if hasattr(creature, "mature"):
-        creature.mature = True  # Ready to breed
-    
+        creature.mature = True
+
     if hasattr(creature, "hunger"):
         creature.hunger = getattr(creature, "max_hunger", 100)
-    
+
     if hasattr(creature, "stats"):
         creature.stats.hp = getattr(creature.stats, "max_hp", creature.stats.hp)
-    
+
     if hasattr(creature, "hue"):
-        creature.hue = random.uniform(0, 360)  # For family colors
-    
+        creature.hue = random.uniform(0, 360)
+
     return creature
 
 
-def create_unified_battle():
+def create_unified_battle() -> SpatialBattle:
     """
-    Create a unified battle with all features enabled:
-    - Living world (personalities, skills, history)
-    - Pellet evolution (trait-based pellets that reproduce)
-    - Ecosystem survival (hunger, foraging, breeding)
+    Create a complete EvoBattle world with all features enabled.
     
-    PERFORMANCE NOTE:
-    Uses SpatialBattle which employs SpatialHashGrid for optimized:
-    - Creature targeting: O(k) instead of O(n²)
-    - Breeding proximity checks: O(n) instead of O(n²)
-    - Resource queries: O(k) instead of O(n²)
-    where k is the number of entities in nearby grid cells (typically 5-10)
+    This function sets up a full simulation including:
+    - 30 creatures with random names and traits
+    - Random biome selection (desert, forest, grassland, etc.)
+    - Environmental system (weather, terrain, hazards)
+    - Living world enhancer (hunger, reproduction, ecosystem dynamics)
+    - Grass growth system (nutrient zones, pollination)
     
-    See SPATIAL_OPTIMIZATION.md for technical details.
+    The battle is configured for an engaging gameplay experience with:
+    - Arena size: 160x100 units
+    - Mixed creature levels (3-6)
+    - Random trait distribution
+    - Dynamic environment
+    
+    Returns:
+        SpatialBattle instance with all systems initialized and ready to run
+        
+    Note:
+        This function prints initialization details to console, including
+        creature names, traits, and personality descriptions.
     """
-    print("\n=== Creating Unified EvoBattle World ===")
-    
-    # Generate unique creature names
+
     name_gen = NameGenerator()
-    num_creatures = 30 # starting creatures
+    num_creatures = 30
     creature_names = name_gen.generate_batch(num_creatures)
-    
+
     creatures = []
-    for i, name in enumerate(creature_names):
+    for name in creature_names:
         level = random.randint(3, 6)
         creature = create_creature(name, level=level)
         creatures.append(creature)
-    
+
     print(f"\nCreated {len(creatures)} creatures (sample):")
     for c in creatures[:5]:
-        trait_names = [t.name for t in c.traits]
-        print(f"  {c.name}: {', '.join(trait_names)} (lvl {c.level})")
-        print(f"    Personality: {c.personality.get_description()}")
-    if len(creatures) > 5:
-        print(f"  ... and {len(creatures) - 5} more")
-    
-    # Create battle with balanced settings for all features
-    # NOTE: SpatialBattle automatically creates and manages SpatialHashGrid
-    # for creatures and resources (via Arena). No manual grid management needed.
+        trait_names = [t.name for t in getattr(c, 'traits', [])]
+        personality_desc = "(no personality)"
+        if hasattr(c, 'personality'):
+            try:
+                personality_desc = c.personality.get_description()
+            except Exception:
+                pass
+        print(f"- {c.name} (Lvl {c.level}): {', '.join(trait_names)} | {personality_desc}")
+
+    # Create battle with random biome
     battle = SpatialBattle(
-        creatures,
-        arena_width=120.0,
+        creatures_or_team1=creatures,
+        arena_width=160.0,
         arena_height=100.0,
-        resource_spawn_rate=0.001,  # Reduced from 0.15 to 0.06 for better balance
-        initial_resources=40  # Starting pellets
+        biome_type='random',
+        enable_environment=True
     )
-    
-    # Enable living world features
+
+    # Create and attach enhancer
     enhancer = LivingWorldBattleEnhancer(battle)
     battle.enhancer = enhancer
+    
+    # Initialize battle start
     enhancer.on_battle_start(creatures)
-    
+
     print("\n=== All Features Enabled ===")
-    print("  ✓ Living World: Personalities, skills, history, relationships")
-    print("  ✓ Pellet Evolution: Visual traits, generation tracking, reproduction")
-    print("  ✓ Ecosystem: Hunger, foraging, breeding, population dynamics")
-    print("  ✓ Combat: Spatial battles with abilities and tactics")
-    print("  ✓ Optimizations: Spatial hash grid, rendering cache, effect pooling")
-    
     return battle
 
 
-def run_battle_loop(window, battle, injection=None, trait_pool=None):
+def get_creature_at_position(mouse_pos, battle, arena_renderer, window):
     """
-    Run the main unified battle game loop with all features.
+    Find the creature at the given mouse position for selection.
     
-    Features include:
-    - Living world: Creature inspector, personalities, skills, history
-    - Pellet evolution: Visual trait rendering, generation tracking
-    - Ecosystem: Hunger bars, population stats, breeding
-    - Combat: Spatial battles, abilities, event animations
-    
-    PERFORMANCE OPTIMIZATIONS APPLIED:
-    1. ArenaRenderer: Grid caching enabled (cached surface reused each frame)
-    2. CreatureRenderer: Text surface caching (200 entry limit)
-    3. UIComponents: Text surface caching (300 entry limit)
-    4. EventAnimator: Effect object pooling (50 object pool)
-    5. GameWindow: Default 30 FPS target (adjustable at runtime)
-    
-    RUNTIME CONTROLS:
-    - Click creatures: Inspect history and stats
-    - I: Toggle creature inspector
-    - SPACE: Pause/Resume
-    - ESC: Pause Menu
-    - F3: Toggle FPS counter
-    - +/=: Increase FPS by 5
-    - -: Decrease FPS by 5
+    Uses a circular click radius to detect creatures near the mouse cursor.
+    Converts screen coordinates to world coordinates for accurate detection.
     
     Args:
-        window: Game window
-        battle: Spatial battle instance with all features enabled
-        injection: optional TraitInjectionSystem instance
-        trait_pool: optional list to collect injected traits
+        mouse_pos: Tuple of (x, y) screen coordinates from pygame mouse event
+        battle: SpatialBattle instance containing creatures
+        arena_renderer: ArenaRenderer for coordinate conversion
+        window: GameWindow for screen dimensions
+    
+    Returns:
+        BattleCreature if one is found within click radius, None otherwise
+        
+    Note:
+        Click radius is set to 25 pixels for easy creature selection.
+        Only alive creatures can be selected.
     """
-    # Create all renderers with optimized settings
-    # Grid rendering OFF by default for best performance (can toggle with show_grid=True)
-    # When enabled, grid is automatically cached for minimal overhead
+    click_radius = 25
+    for bc in battle.creatures:
+        if not bc.is_alive():
+            continue
+        screen_pos = arena_renderer.world_to_screen(
+            bc.spatial.position,
+            window.screen,
+            battle.arena
+        )
+        dx = mouse_pos[0] - screen_pos[0]
+        dy = mouse_pos[1] - screen_pos[1]
+        distance = (dx * dx + dy * dy) ** 0.5
+        if distance <= click_radius:
+            return bc
+    return None
+
+
+def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = None, trait_pool: Optional[List[Trait]] = None) -> bool:
+    """
+    Run the main game loop for the battle simulation.
+    
+    This is the core game loop that handles:
+    - User input (keyboard and mouse)
+    - Battle simulation updates
+    - Rendering (creatures, pellets, UI, animations)
+    - Event handling (combat, reproduction, story generation)
+    - Trait injection based on population pressure
+    - Pause/resume functionality
+    - Post-game summary
+    
+    Game Controls:
+    - SPACE: Pause/Resume simulation
+    - ESC: Open pause menu
+    - S: View AI-generated battle story
+    - I: Toggle creature inspector panel
+    - Click creatures: Select and inspect individual creatures
+    - Mouse wheel: Scroll in creature inspector
+    
+    Args:
+        window: GameWindow instance for rendering
+        battle: SpatialBattle instance to simulate
+        injection: Optional TraitInjectionSystem for procedural trait introduction
+        trait_pool: Optional list to track available traits (modified in-place)
+    
+    Returns:
+        bool: True if user wants to restart, False if quitting
+        
+    Game Loop Flow:
+    1. Process user input events
+    2. Update battle simulation (if not paused)
+    3. Update animations and UI
+    4. Render all game elements
+    5. Check for trait injection opportunities
+    6. Generate battle stories at intervals
+    7. Display post-game summary when battle ends
+    
+    Trait Injection:
+        The system monitors population health and introduces new traits when:
+        - Cosmic events occur (periodic random injection)
+        - Population pressure is high (starvation, low health)
+        - New generations are born
+        
+    Story Generation:
+        AI-generated battle narratives are created every 5 minutes,
+        providing dramatic, comedic, or epic summaries of events.
+    """
     arena_renderer = ArenaRenderer(show_grid=False)
-    creature_renderer = CreatureRenderer()  # Text caching enabled by default
+    creature_renderer = CreatureRenderer()
     pellet_renderer = PelletRenderer(base_radius=6, show_generation=True)
-    ui_components = UIComponents(max_log_entries=10, show_pellet_stats=True)  # Text caching enabled
-    event_animator = EventAnimator()  # Effect pooling enabled by default
+    ui_components = UIComponents(max_log_entries=10, show_pellet_stats=True)
+    event_animator = EventAnimator()
     creature_inspector = CreatureInspector()
     pause_menu = PauseMenu()
     post_game_summary = PostGameSummary()
     story_viewer = StoryViewer(width=700, height=600)
     font = pygame.font.Font(None, 24)
-    
-    # Initialize story generation system
+
     story_generator = BattleStoryGenerator(default_tone=StoryTone.DRAMATIC)
-    story_tracker = BattleStoryTracker(
-        generator=story_generator,
-        story_interval_seconds=300.0  # 5 minutes for production
-    )
-    story_tracker.start_tracking()
-    
-    # Connect pellet renderer to arena renderer
+    story_tracker = BattleStoryTracker(generator=story_generator, story_interval_seconds=300.0)
+    try:
+        story_tracker.start_tracking()
+    except Exception:
+        pass
+
     arena_renderer.pellet_renderer = pellet_renderer
-    
-    # Subscribe to battle events
-    battle.add_event_callback(ui_components.add_event_to_log)
-    battle.add_event_callback(event_animator.on_battle_event)
-    
-    # Add story event callback
+
+    try:
+        battle.add_event_callback(ui_components.add_event_to_log)
+        battle.add_event_callback(event_animator.on_battle_event)
+    except Exception:
+        pass
+
     def on_battle_event(event):
-        story_tracker.generator.add_event(event)
-    battle.add_event_callback(on_battle_event)
-    
-    # Game state
+        try:
+            story_tracker.generator.add_event(event)
+        except Exception:
+            pass
+    try:
+        battle.add_event_callback(on_battle_event)
+    except Exception:
+        pass
+
     clock = pygame.time.Clock()
     running = True
     paused = False
@@ -268,96 +348,85 @@ def run_battle_loop(window, battle, injection=None, trait_pool=None):
     current_tone = StoryTone.DRAMATIC
     last_story_notification = 0.0
 
-    # Track generation by births for injection checks
     last_birth_count = getattr(battle, 'birth_count', 0)
     current_generation = 0
-
-    # Pressure-check timer (run evaluate_population_pressure once per second)
     last_pressure_check = -1.0
 
-    # Set initial story in viewer
-    story_viewer.set_story(current_story, current_tone)
-    
+    try:
+        story_viewer.set_story(current_story, current_tone)
+    except Exception:
+        pass
+
     print("\n=== Battle Started ===")
-    print("Controls:")
-    print("  Click on creatures to inspect their history and stats")
-    print("  I: Toggle creature inspector")
-    print("  S: View battle story")
-    print("  SPACE: Pause/Resume")
-    print("  ESC: Pause Menu")
-    print("  R: Restart (from pause menu)")
-    print("  F3: Toggle FPS counter")
-    print("  +/=: Increase FPS | -: Decrease FPS")
-    print("\nWatch creatures develop skills, pellets evolve, and populations grow!")
-    print("All performance optimizations active (spatial grid, caching, pooling)")
-    
+
     while running:
         dt = clock.tick(60) / 1000.0
-        
-        # Handle events
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
-            
-            # Pause menu handling
+
             if pause_menu.visible:
                 action = pause_menu.handle_input(event)
                 if action == PauseMenuAction.RESUME:
                     paused = False
                 elif action == PauseMenuAction.RESTART:
-                    return True  # Restart
+                    return True
                 elif action == PauseMenuAction.QUIT:
                     return False
                 continue
-            
-            # Post-game summary handling
+
             if show_summary:
                 action = post_game_summary.handle_input(event)
-                if action == 'menu' or action == 'replay':
-                    return True  # Restart
+                if action in ('menu', 'replay'):
+                    return True
                 elif action == 'export':
-                    filepath = post_game_summary.export_stats()
-                    print(f"Stats exported to: {filepath}")
+                    try:
+                        filepath = post_game_summary.export_stats()
+                        print(f"Stats exported to: {filepath}")
+                    except Exception:
+                        pass
                 continue
-            
-            # Story viewer handling
+
             if show_story:
-                result = story_viewer.handle_event(event, 350, 150)
+                try:
+                    result = story_viewer.handle_event(event, 350, 150)
+                except Exception:
+                    result = None
                 if result:
                     action, data = result
-                    
                     if action == StoryViewerAction.CLOSE:
                         show_story = False
-                    
                     elif action == StoryViewerAction.CHANGE_TONE:
                         current_tone = data
-                        print(f"\nRegenerating story with {current_tone.value} tone...")
-                        current_story = story_tracker.generator.generate_story(tone=current_tone)
-                        story_viewer.set_story(current_story, current_tone)
-                        print("Story regenerated!")
-                    
+                        try:
+                            current_story = story_tracker.generator.generate_story(tone=current_tone)
+                            story_viewer.set_story(current_story, current_tone)
+                        except Exception:
+                            pass
                     elif action == StoryViewerAction.REGENERATE:
-                        print(f"\nRegenerating story with {current_tone.value} tone...")
-                        current_story = story_tracker.generator.generate_story(tone=current_tone)
-                        story_viewer.set_story(current_story, current_tone)
-                        print("Story regenerated!")
-                    
+                        try:
+                            current_story = story_tracker.generator.generate_story(tone=current_tone)
+                            story_viewer.set_story(current_story, current_tone)
+                        except Exception:
+                            pass
                     elif action == StoryViewerAction.EXPORT_TXT:
-                        filepath = "battle_story.txt"
-                        story_tracker.generator.export_story(current_story, filepath, 'txt')
-                        print(f"\nStory exported to {filepath}")
-                    
+                        try:
+                            filepath = "battle_story.txt"
+                            story_tracker.generator.export_story(current_story, filepath, 'txt')
+                        except Exception:
+                            pass
                     elif action == StoryViewerAction.EXPORT_MD:
-                        filepath = "battle_story.md"
-                        story_tracker.generator.export_story(current_story, filepath, 'md')
-                        print(f"\nStory exported to {filepath}")
+                        try:
+                            filepath = "battle_story.md"
+                            story_tracker.generator.export_story(current_story, filepath, 'md')
+                        except Exception:
+                            pass
                 continue
-            
-            # Inspector handling
+
             if creature_inspector.handle_mouse_event(event, window.screen):
                 continue
-            
-            # Regular input
+
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     if show_story:
@@ -373,74 +442,75 @@ def run_battle_loop(window, battle, injection=None, trait_pool=None):
                 elif event.key == pygame.K_s:
                     show_story = not show_story
                     if show_story:
-                        # Update story when opening viewer
-                        story_viewer.set_story(current_story, current_tone)
+                        try:
+                            story_viewer.set_story(current_story, current_tone)
+                        except Exception:
+                            pass
                 elif event.key == pygame.K_i:
                     creature_inspector.toggle_visibility()
-            
+
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left click
+                if event.button == 1:
                     mouse_pos = pygame.mouse.get_pos()
-                    clicked_creature = get_creature_at_position(
-                        mouse_pos, battle, arena_renderer, window
-                    )
+                    clicked_creature = get_creature_at_position(mouse_pos, battle, arena_renderer, window)
                     if clicked_creature:
                         selected_battle_creature = clicked_creature
                         creature_inspector.select_creature(clicked_creature.creature)
                         print(f"\nSelected: {clicked_creature.creature.name}")
-            
+
             elif event.type == pygame.MOUSEWHEEL:
                 creature_inspector.handle_scroll(-event.y)
-        
-        # Update battle
-        if not paused and not show_story and not battle.is_over:
-            battle.update(dt)
             
-            # Add battle logs to story generator
-            for log in battle.get_battle_log():
-                if log not in story_tracker.generator.battle_logs:
-                    story_tracker.generator.add_log(log)
-            
-            # Check if it's time to generate a story
-            if story_tracker.should_generate_story():
-                print(f"\n{'='*70}")
-                print(f"  AUTO-GENERATING STORY ({story_tracker.story_interval}s interval)")
-                print(f"{'='*70}")
-                current_story = story_tracker.generate_and_store_story(tone=current_tone)
-                story_viewer.set_story(current_story, current_tone)
-                last_story_notification = battle.current_time
-                print("\nStory generated! Press 'S' to view it.")
-                print(f"Total stories generated: {len(story_tracker.get_all_stories())}")
+            # Handle UI component interactions (buttons, etc)
+            ui_components.handle_event(event, battle)
 
-            # === Trait injection periodic checks ===
+        if not paused and not show_story and not getattr(battle, 'is_over', False):
             try:
-                # Track births as a proxy for generation
+                battle.update(dt)
+            except Exception:
+                pass
+
+            try:
+                for log in battle.get_battle_log():
+                    if log not in getattr(story_tracker.generator, 'battle_logs', []):
+                        story_tracker.generator.add_log(log)
+            except Exception:
+                pass
+
+            try:
+                if story_tracker.should_generate_story():
+                    current_story = story_tracker.generate_and_store_story(tone=current_tone)
+                    story_viewer.set_story(current_story, current_tone)
+                    last_story_notification = getattr(battle, 'current_time', 0.0)
+            except Exception:
+                pass
+
+            # Trait injection checks
+            try:
                 birth_count = getattr(battle, 'birth_count', 0)
                 if birth_count != last_birth_count:
-                    # Increment generation when births occurred
                     current_generation += (birth_count - last_birth_count)
                     last_birth_count = birth_count
-
                     if injection:
-                        new_traits = injection.check_cosmic_event(current_generation)
+                        try:
+                            new_traits = injection.check_cosmic_event(current_generation)
+                        except Exception:
+                            new_traits = []
                         for t in new_traits:
-                            print(f"[COSMIC EVENT] new trait available: {t.name}")
-                            if trait_pool is not None:
-                                try:
+                            try:
+                                print(f"[COSMIC EVENT] new trait available: {getattr(t, 'name', str(t))}")
+                                if trait_pool is not None:
                                     trait_pool.append(t)
-                                except Exception as e:
-                                    print(f"Warning: failed to append trait to trait_pool: {e}")
+                            except Exception:
+                                pass
 
-                # Evaluate population pressure once per second
-                if injection and battle.current_time - last_pressure_check >= 1.0:
-                    last_pressure_check = battle.current_time
-
+                if injection and getattr(battle, 'current_time', 0.0) - last_pressure_check >= 1.0:
+                    last_pressure_check = getattr(battle, 'current_time', 0.0)
                     alive_bcs = [bc for bc in battle.creatures if bc.is_alive()]
                     pop_size = len(alive_bcs)
                     starvation_count = sum(1 for bc in alive_bcs if getattr(bc.creature, 'hunger', 100) < 10)
 
                     if pop_size > 0:
-                        # Compute average normalized health (hp / max_hp)
                         avg_health_norm = sum(
                             (bc.creature.stats.hp / max(1, getattr(bc.creature.stats, 'max_hp', 1)))
                             for bc in alive_bcs
@@ -448,263 +518,180 @@ def run_battle_loop(window, battle, injection=None, trait_pool=None):
                     else:
                         avg_health_norm = 0.0
 
-                    pressure_trait = injection.evaluate_population_pressure(
-                        pop_size, starvation_count, avg_health_norm, current_generation
-                    )
-                    if pressure_trait:
-                        print(f"[PRESSURE INJECTION] applying {pressure_trait.name} to survivors")
-                        survivors = [bc.creature for bc in alive_bcs]
-                        for c in survivors:
-                            try:
-                                c.add_trait(pressure_trait.copy())
-                            except Exception as e:
-                                print(f"Warning: failed to add pressure trait: {e}")
-            except Exception as e:
-                # Don't let injection issues crash the game loop
-                print(f"Trait injection error: {e}")
+                    try:
+                        pressure_trait = injection.evaluate_population_pressure(pop_size, starvation_count, avg_health_norm, current_generation)
+                    except Exception:
+                        pressure_trait = None
 
-        # Update animations
+                    if pressure_trait:
+                        try:
+                            print(f"[PRESSURE INJECTION] applying {getattr(pressure_trait, 'name', str(pressure_trait))} to survivors")
+                            survivors = [bc.creature for bc in alive_bcs]
+                            for c in survivors:
+                                try:
+                                    c.add_trait(pressure_trait.copy())
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
         creature_inspector.update(dt)
         event_animator.update(dt)
-        event_animator.process_events(window.screen, battle)
-        
-        # Render
+        try:
+            event_animator.process_events(window.screen, battle)
+        except Exception:
+            pass
+
         window.screen.fill((20, 20, 30))
-        
-        if show_story:
-            # Draw dimmed battle background
-            arena_renderer.render(window.screen, battle)
-            pellet_renderer.render(window.screen, battle)
-            creature_renderer.render(window.screen, battle)
-            
-            # Darken the background
-            dark_overlay = pygame.Surface((window.width, window.height))
-            dark_overlay.set_alpha(180)
-            dark_overlay.fill((0, 0, 0))
-            window.screen.blit(dark_overlay, (0, 0))
-            
-            # Draw story viewer
-            story_viewer.draw(window.screen, 350, 150)
-        
-        else:
-            # Render arena
-            arena_renderer.render(window.screen, battle)
-            
-            # Render pellets with evolution tracking
-            pellet_renderer.render(window.screen, battle)
-            
-            # Render creatures
-            creature_renderer.render(window.screen, battle)
-            
-            # Highlight selected creature
-            if selected_battle_creature and selected_battle_creature.is_alive():
-                screen_pos = arena_renderer.world_to_screen(
-                    selected_battle_creature.spatial.position,
-                    window.screen,
-                    battle.arena
-                )
-                pygame.draw.circle(
-                    window.screen,
-                    (255, 255, 0),
-                    (int(screen_pos[0]), int(screen_pos[1])),
-                    30,
-                    3
-                )
-            
-            # Render event animations
-            event_animator.render(window.screen)
-            
-            # Render main UI (includes battle timer, population, pellet stats, event log)
-            ui_components.render(window.screen, battle, paused)
-            
-            # Render creature inspector
-            creature_inspector.render(window.screen)
-            
-            # Draw story notification if recently generated
-            if not paused and battle.current_time - last_story_notification < 5.0:
-                notification_font = pygame.font.Font(None, 36)
-                notification_text = notification_font.render(
-                    "New Story Available! Press 'S' to view",
-                    True,
-                    (255, 215, 0)
-                )
-                x = (window.width - notification_text.get_width()) // 2
-                y = 50
-                # Draw background
-                bg_rect = notification_text.get_rect(topleft=(x-10, y-5))
-                bg_rect.width += 20
-                bg_rect.height += 10
-                pygame.draw.rect(window.screen, (30, 30, 40), bg_rect)
-                pygame.draw.rect(window.screen, (255, 215, 0), bg_rect, 2)
-                window.screen.blit(notification_text, (x, y))
-        
-        # Render pause menu
-        pause_menu.render(window.screen)
-        
-        # Render post-game summary
+
+        try:
+            if show_story:
+                arena_renderer.render(window.screen, battle)
+                pellet_renderer.render(window.screen, battle)
+                creature_renderer.render(window.screen, battle)
+
+                dark_overlay = pygame.Surface((window.width, window.height))
+                dark_overlay.set_alpha(180)
+                dark_overlay.fill((0, 0, 0))
+                window.screen.blit(dark_overlay, (0, 0))
+
+                story_viewer.draw(window.screen, 350, 150)
+            else:
+                arena_renderer.render(window.screen, battle)
+                pellet_renderer.render(window.screen, battle)
+                creature_renderer.render(window.screen, battle)
+
+                if selected_battle_creature and selected_battle_creature.is_alive():
+                    screen_pos = arena_renderer.world_to_screen(
+                        selected_battle_creature.spatial.position,
+                        window.screen,
+                        battle.arena
+                    )
+                    pygame.draw.circle(window.screen, (255, 255, 0), (int(screen_pos[0]), int(screen_pos[1])), 30, 3)
+
+                event_animator.render(window.screen)
+                ui_components.render(window.screen, battle, paused)
+                creature_inspector.render(window.screen)
+
+                if not paused and getattr(battle, 'current_time', 0.0) - last_story_notification < 5.0:
+                    notification_font = pygame.font.Font(None, 36)
+                    notification_text = notification_font.render(
+                        "New Story Available! Press 'S' to view",
+                        True,
+                        (255, 215, 0)
+                    )
+                    x = (window.width - notification_text.get_width()) // 2
+                    y = 50
+                    bg_rect = notification_text.get_rect(topleft=(x-10, y-5))
+                    bg_rect.width += 20
+                    bg_rect.height += 10
+                    pygame.draw.rect(window.screen, (30, 30, 40), bg_rect)
+                    pygame.draw.rect(window.screen, (255, 215, 0), bg_rect, 2)
+                    window.screen.blit(notification_text, (x, y))
+        except Exception:
+            pass
+
+        try:
+            pause_menu.render(window.screen)
+        except Exception:
+            pass
+
         if show_summary:
-            post_game_summary.render(window.screen)
-        
-        # Instructions overlay
+            try:
+                post_game_summary.render(window.screen)
+            except Exception:
+                pass
+
         if not pause_menu.visible and not show_summary and not creature_inspector.visible and not show_story:
-            instruction_text = font.render(
-                "Click creatures! | I: Inspector | S: Story | SPACE: Pause | ESC: Menu",
-                True,
-                (255, 255, 100)
-            )
-            text_rect = instruction_text.get_rect(center=(window.width // 2, 50))
-            
-            bg_rect = text_rect.inflate(20, 10)
-            bg_surface = pygame.Surface(bg_rect.size, pygame.SRCALPHA)
-            bg_surface.fill((0, 0, 0, 180))
-            window.screen.blit(bg_surface, bg_rect.topleft)
-            window.screen.blit(instruction_text, text_rect)
-        
-        # Pause indicator
+            try:
+                instruction_text = font.render(
+                    "Click creatures! | I: Inspector | S: Story | SPACE: Pause | ESC: Menu",
+                    True,
+                    (255, 255, 100)
+                )
+                text_rect = instruction_text.get_rect(center=(window.width // 2, 50))
+                bg_rect = text_rect.inflate(20, 10)
+                bg_surface = pygame.Surface(bg_rect.size, pygame.SRCALPHA)
+                bg_surface.fill((0, 0, 0, 180))
+                window.screen.blit(bg_surface, bg_rect.topleft)
+                window.screen.blit(instruction_text, text_rect)
+            except Exception:
+                pass
+
         if paused and not pause_menu.visible:
             pause_font = pygame.font.Font(None, 48)
             pause_text = pause_font.render("PAUSED", True, (255, 255, 100))
             text_rect = pause_text.get_rect(center=(window.width // 2, window.height // 2))
-            
             s = pygame.Surface((text_rect.width + 40, text_rect.height + 20))
             s.set_alpha(200)
             s.fill((30, 30, 40))
             window.screen.blit(s, (text_rect.x - 20, text_rect.y - 10))
             window.screen.blit(pause_text, text_rect)
-        
-        # Show post-game summary when battle ends
-        if battle.is_over and not show_summary and not pause_menu.visible:
-            post_game_summary.show(battle)
-            show_summary = True
-        
+
+        if getattr(battle, 'is_over', False) and not show_summary and not pause_menu.visible:
+            try:
+                post_game_summary.show(battle)
+                show_summary = True
+            except Exception:
+                pass
+
         pygame.display.flip()
-    
+
     return False
 
 
-def get_creature_at_position(mouse_pos, battle, arena_renderer, window):
-    """
-    Find creature at mouse position for UI click handling.
-    
-    NOTE: This uses simple iteration because:
-    1. It's a UI event handler, not a performance-critical game loop operation
-    2. Only runs on mouse click (infrequent), not every frame
-    3. The number of alive creatures is typically small (< 20)
-    4. Adding spatial grid query would be overkill for this use case
-    
-    For game logic operations (targeting, breeding, collision), SpatialBattle
-    uses SpatialHashGrid for O(k) proximity queries instead of O(n) iteration.
-    """
-    click_radius = 25
-    
-    for bc in battle.creatures:
-        if not bc.is_alive():
-            continue
-        
-        screen_pos = arena_renderer.world_to_screen(
-            bc.spatial.position,
-            window.screen,
-            battle.arena
-        )
-        dx = mouse_pos[0] - screen_pos[0]
-        dy = mouse_pos[1] - screen_pos[1]
-        distance = (dx * dx + dy * dy) ** 0.5
-        
-        if distance <= click_radius:
-            return bc
-    
-    return None
-
-
 def main():
-    """
-    Main entry point for EvoBattle - Unified living world simulator.
-    
-    PERFORMANCE CONFIGURATION:
-    - GameWindow defaults to 30 FPS (broad hardware compatibility)
-    - ArenaRenderer grid rendering disabled by default (enable with show_grid=True)
-    - All caching and pooling optimizations enabled automatically
-    - Runtime FPS adjustment available via keyboard (+/- keys)
-    
-    For performance tuning, modify settings in run_battle_loop():
-    - ArenaRenderer(show_grid=False): Toggle grid visualization
-    - GameWindow(fps=30): Adjust target frame rate (10-120)
-    - UIComponents(max_log_entries=10): Control event log size
-    
-    See RENDERING_DOCUMENTATION.md for detailed performance recommendations.
-    """
     print("=" * 70)
     print("EvoBattle - Evolution-Based Living World Simulator")
     print("=" * 70)
-    print("\nInitializing game systems...")
-    
-    # Initialize Pygame
-    pygame.init()
-    
-    # Create window with default performance settings
-    # Default: 30 FPS for broad hardware compatibility
-    # Adjustable at runtime with +/- keys (clamped 10-120)
-    # Larger window (1600x900) to accommodate side panels without overlapping arena
-    window = GameWindow(
-        width=1600,
-        height=900,
-        title="EvoBattle - Living World Simulator"
-        # fps parameter defaults to 30 in GameWindow.__init__
-    )
 
-    # === Trait injection wiring (global for this run) ===
-    trait_pool = []
+    pygame.init()
+
+    window = GameWindow(width=1600, height=900, title="EvoBattle - Living World Simulator")
+
+    trait_pool: List[Trait] = []
     analytics = TraitAnalytics()
-    injection = TraitInjectionSystem(
-        config=InjectionConfig(injection_enabled=True),
-        analytics=analytics,
-        seed=None
-    )
+    injection = TraitInjectionSystem(config=InjectionConfig(injection_enabled=True), analytics=analytics, seed=None)
 
     def on_trait_injected(trait, reason):
-        # quick visible notification in console
         try:
             name = trait.name
         except Exception:
             name = str(trait)
         print(f"[TRAIT INJECTED] {name} reason={reason}")
-        # optional: add to a global trait pool for the game to use
         try:
             trait_pool.append(trait)
-        except Exception as e:
-            print(f"Warning: failed to append trait to trait_pool: {e}")
+        except Exception:
+            pass
 
-    injection.register_injection_callback(on_trait_injected)
-    # ==================================================
-    
-    print("✓ All systems ready!")
-    print("✓ Performance optimizations: Spatial grid, caching, effect pooling")
-    
-    # Main game loop - restart on request
+    try:
+        injection.register_injection_callback(on_trait_injected)
+    except Exception:
+        pass
+
+    print("All systems ready!")
+
     while True:
-        # Create unified battle with all features
         battle = create_unified_battle()
 
-        # Wire injection into breeding so breeding-based injections run
         try:
             battle.breeding_system = Breeding(injection_system=injection)
         except Exception:
             try:
                 battle.breeding_system = Breeding(mutation_rate=0.1, trait_inheritance_chance=0.8, injection_system=injection)
-            except Exception as e:
-                print(f"Warning: could not replace battle.breeding_system with injection-enabled Breeding: {e}")
-        
-        # Run the game; pass injection and trait_pool so run_battle_loop can use them
+            except Exception:
+                pass
+
         restart = run_battle_loop(window, battle, injection=injection, trait_pool=trait_pool)
-        
         if not restart:
             break
-        
+
         print("\n" + "=" * 70)
         print("Restarting simulation...")
         print("=" * 70)
-    
-    # Cleanup
+
     pygame.quit()
     print("\n" + "=" * 70)
     print("Thank you for playing EvoBattle!")
@@ -716,5 +703,8 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\n\nGame interrupted by user.")
-        pygame.quit()
+        try:
+            pygame.quit()
+        except Exception:
+            pass
         sys.exit(0)

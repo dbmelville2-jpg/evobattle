@@ -12,8 +12,10 @@ Controls:
 - SPACE: Pause/Resume
 - ESC: Exit
 - R: Restart simulation
-- TODO: Step forward (single frame advance) - to be implemented
-- TODO: Fast-forward mode - to be implemented
+
+Potential Future Enhancements:
+- Step forward mode (single frame advance)
+- Fast-forward mode for accelerated simulation
 """
 
 import sys
@@ -140,9 +142,10 @@ def main():
     print("  SPACE - Pause/Resume")
     print("  ESC   - Exit")
     print("  R     - Restart")
-    print("\nTODO - Future Controls:")
-    print("  S     - Step forward (single frame) [To be implemented]")
-    print("  F     - Fast-forward mode [To be implemented]")
+    print("\nPotential Future Enhancements:")
+    print("  S     - Step forward (single frame)")
+    print("  F     - Fast-forward mode")
+    print("  (See docs/future_features.md for implementation details)")
     print()
     
     # Simulation state
@@ -150,7 +153,9 @@ def main():
     paused = False
     clock = pygame.time.Clock()
     
-    # TODO: Add step mode and fast-forward mode
+    # Future enhancement: Add step mode and fast-forward mode
+    # These features would allow frame-by-frame advancement and accelerated simulation
+    # Commented out for now - see docs/future_features.md for implementation plan
     # step_mode = False
     # fast_forward = False
     # fast_forward_multiplier = 5.0
@@ -171,7 +176,7 @@ def main():
                     battle = create_pellet_evolution_battle()
                     event_animator.clear()
                     battle.add_event_callback(on_battle_event)
-                # TODO: Add step and fast-forward controls
+                # Future enhancement: Step and fast-forward controls
                 # elif event.key == pygame.K_s:
                 #     step_mode = True
                 #     paused = False
@@ -182,12 +187,12 @@ def main():
         # Update simulation
         if not paused and not battle.is_over:
             dt = clock.get_time() / 1000.0  # Convert to seconds
-            # TODO: Apply fast-forward multiplier
+            # Future enhancement: Apply fast-forward multiplier
             # if fast_forward:
             #     dt *= fast_forward_multiplier
             battle.update(dt)
             
-            # TODO: Handle step mode
+            # Future enhancement: Handle step mode
             # if step_mode:
             #     paused = True
             #     step_mode = False

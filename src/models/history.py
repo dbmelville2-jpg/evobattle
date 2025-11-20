@@ -214,6 +214,10 @@ class CreatureHistory:
         
         # Titles earned
         self.titles: List[str] = []
+        
+        # Memory management: Max events per creature to prevent unbounded growth
+        self.max_events = 200  # Keep last 200 events per creature
+        self.max_legendary_moments = 50  # Keep last 50 legendary moments
     
     def add_event(self, event: LifeEvent):
         """
@@ -224,9 +228,17 @@ class CreatureHistory:
         """
         self.events.append(event)
         
+        # Prevent unbounded growth - keep only recent events
+        if len(self.events) > self.max_events:
+            # Remove oldest events, keeping the most recent max_events
+            self.events = self.events[-self.max_events:]
+        
         # Track legendary moments separately
         if event.significance >= 0.8:
             self.legendary_moments.append(event)
+            # Also limit legendary moments
+            if len(self.legendary_moments) > self.max_legendary_moments:
+                self.legendary_moments = self.legendary_moments[-self.max_legendary_moments:]
     
     def record_battle_start(self, enemies: List[str], location: Optional[tuple] = None):
         """Record the start of a battle."""

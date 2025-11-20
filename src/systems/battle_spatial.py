@@ -1,7 +1,7 @@
 """
 Spatial Real-Time Battle System - Handles real-time 2D combat.
 
-Creatures move and fight in a 2D arena with positioning, proximity-based        
+Creatures move and fight in a 2D arena with positioning, proximity-based
 targeting, and continuous time updates. Traits affect behavior, movement,
 and combat decisions.
 
@@ -38,6 +38,7 @@ from ..models.environment import Environment, EnvironmentalHazard, HazardType
 from ..models.attention import AttentionManager, StimulusType, create_attention_manager_from_traits
 from .breeding import Breeding
 from .grass_growth_system import GrassGrowthSystem
+from .trait_effects_handler import TraitEffectsHandler
 from src.models.relationship_metrics import CooperativeBehaviorSystem, DecisionContext
 
 
@@ -132,6 +133,9 @@ class BattleCreature:
         
         # Movement state to prevent jitter
         self.current_movement_target: Optional[Vector2D] = None
+        self.current_movement_entity: Optional[SpatialEntity] = None  # Track dynamic entity for smooth chasing
+        self.target_stopping_distance: float = 0.0
+        self.current_separation_force: Vector2D = Vector2D(0, 0)
         self.last_behavior_state: str = "combat"  # Track if seeking food vs combat (start in combat mode)
         
         # Combat engagement state to prevent circling
@@ -227,6 +231,10 @@ class SpatialBattle:
         'steel': {'ice': 2.0, 'fairy': 2.0, 'fire': 0.5}
     }
     
+    # Memory management: Max sizes for event/log lists to prevent unbounded growth
+    MAX_EVENTS = 1000  # Keep last 1000 events
+    MAX_BATTLE_LOG = 500  # Keep last 500 log messages
+    
     def __init__(
         self,
         creatures_or_team1: List[Creature],
@@ -239,7 +247,8 @@ class SpatialBattle:
         living_world_enhancer: Optional['LivingWorldBattleEnhancer'] = None,
         combat_config: Optional[CombatConfig] = None,
         environment: Optional[Environment] = None,
-        enable_environment: bool = False
+        enable_environment: bool = False,
+        biome_type: Optional[str] = None  # New parameter for biome generation
     ):
         """
         Initialize a new spatial battle.
@@ -256,6 +265,7 @@ class SpatialBattle:
             combat_config: Optional combat configuration (uses defaults if None)
             environment: Optional environment instance (creates default if None and enable_environment=True)
             enable_environment: Enable environmental simulation (weather, terrain, day/night)
+            biome_type: Optional biome type ('grassland', 'desert', 'forest', 'marsh', 'rocky_highlands', 'mixed', 'random')
         """
         # Handle backward compatibility - detect old two-team API
         if team2_or_none is not None:
@@ -268,8 +278,57 @@ class SpatialBattle:
         # Combat configuration
         self.combat_config = combat_config if combat_config else CombatConfig()
         
-        # Environmental simulation
-        if enable_environment or environment is not None:
+        # Environmental simulation with biome support
+        if biome_type and environment is None:
+            # Generate biome-based environment
+            from .biome_generator import BiomeGenerator, BiomeType
+            
+            generator = BiomeGenerator(seed=random_seed)
+            
+            # Parse biome type
+            if biome_type.lower() == 'random':
+                import random as rand
+                # 20% chance for multi-biome
+                if rand.random() < 0.2:
+                    biome_enum = 'multi'
+                else:
+                    biome_enum = rand.choice(list(BiomeType))
+            elif biome_type.lower() == 'multi':
+                biome_enum = 'multi'
+            else:
+                try:
+                    biome_enum = BiomeType(biome_type.lower())
+                except ValueError:
+                    # Default to grassland if invalid
+                    biome_enum = BiomeType.GRASSLAND
+            
+            if biome_enum == 'multi':
+                # Generate multi-biome environment
+                self.environment = generator.generate_multi_biome(
+                    arena_width,
+                    arena_height
+                )
+                self.biome_type = 'multi'
+                # Use average settings for initial resources
+                resource_spawn_rate *= 1.2
+                initial_resources = 25
+                self.pellet_toxicity_bias = 0.0
+            else:
+                # Generate single biome environment
+                self.environment = generator.generate_biome(
+                    biome_enum,
+                    arena_width,
+                    arena_height
+                )
+                self.biome_type = biome_enum
+                
+                # Get pellet spawn config for this biome
+                pellet_config = generator.get_pellet_spawn_config(biome_enum)
+                resource_spawn_rate *= pellet_config['density']
+                initial_resources = pellet_config['initial_count']
+                self.pellet_toxicity_bias = pellet_config['toxicity_bias']
+            
+        elif enable_environment or environment is not None:
             self.environment = environment if environment else Environment(
                 width=arena_width,
                 height=arena_height,
@@ -316,6 +375,11 @@ class SpatialBattle:
         self._ally_cache: Dict[Tuple[str, str], bool] = {}
         self._ally_cache_update_counter = 0
         
+        # Performance optimization: Staggered AI updates
+        # Only update a fraction of creatures' AI each frame
+        self.ai_update_interval: int = 4  # Update AI every 4 frames
+        self.frame_count: int = 0
+        
         # Grass growth enhancement system
         self.grass_growth = GrassGrowthSystem(
             arena_width=arena_width,
@@ -326,6 +390,13 @@ class SpatialBattle:
             enable_symbiotic_bonus=True
         )
         
+        # Trait effects handler for applying interaction_effects
+        self.trait_effects = TraitEffectsHandler()
+        
+        # Terrain affinity tracker for ecosystem interactions
+        from .terrain_affinity_tracker import TerrainAffinityTracker
+        self.terrain_tracker = TerrainAffinityTracker()
+        
         if random_seed is not None:
             random.seed(random_seed)
         
@@ -335,6 +406,11 @@ class SpatialBattle:
         
         # Spawn creatures distributed throughout the arena
         self._creatures = self._spawn_population(all_creatures)
+        
+        # Initialize Experiment Overseer System
+        # Import here to avoid circular dependency
+        from .experiment_overseer_system import ExperimentOverseer
+        self.overseer = ExperimentOverseer(self)
         
         self._log(f"Battle started: {len(all_creatures)} creatures in {arena_width}x{arena_height} arena")
     
@@ -421,6 +497,12 @@ class SpatialBattle:
     def _emit_event(self, event: BattleEvent):
         """Emit a battle event to all registered callbacks."""
         self.events.append(event)
+        
+        # Prevent unbounded growth - keep only recent events
+        if len(self.events) > self.MAX_EVENTS:
+            # Remove oldest events, keeping the most recent MAX_EVENTS
+            self.events = self.events[-self.MAX_EVENTS:]
+        
         for callback in self._event_callbacks:
             try:
                 callback(event)
@@ -430,19 +512,17 @@ class SpatialBattle:
     def _log(self, message: str):
         """Add a message to the battle log."""
         self.battle_log.append(message)
+        
+        # Prevent unbounded growth - keep only recent log messages
+        if len(self.battle_log) > self.MAX_BATTLE_LOG:
+            # Remove oldest messages, keeping the most recent MAX_BATTLE_LOG
+            self.battle_log = self.battle_log[-self.MAX_BATTLE_LOG:]
     
     def _spawn_resource(self):
         """Spawn a food pellet agent at a random location in the arena."""
-        resource_pos = self.arena.get_random_position()
-        # Create a Pellet agent instead of simple Vector2D
-        pellet = create_random_pellet(x=resource_pos.x, y=resource_pos.y)
-        
-        # Apply environmental quality modifiers
-        if self.environment:
-            quality_modifier = self.environment.get_resource_quality_at(resource_pos)
-            # Adjust nutritional value based on environment
-            pellet.traits.nutritional_value *= quality_modifier
-        
+        x = random.uniform(0, self.arena.width)
+        y = random.uniform(0, self.arena.height)
+        pellet = create_random_pellet(x, y)
         self.arena.add_pellet(pellet)
     
     def update(self, delta_time: float):
@@ -460,6 +540,10 @@ class SpatialBattle:
         # Update environmental simulation
         if self.environment:
             self.environment.update(delta_time)
+            
+        # Update Experiment Overseer
+        if hasattr(self, 'overseer') and self.overseer:
+            self.overseer.update(delta_time)
         
         # Spawn resources over time
         self.time_since_last_resource_spawn += delta_time
@@ -530,9 +614,67 @@ class SpatialBattle:
             ))
         
         # Update each creature
-        for creature in alive_creatures:
+        # Staggered AI updates: only update logic for a subset of creatures
+        # But ALWAYS update physics/movement for smoothness
+        self.frame_count += 1
+        
+        for i, creature in enumerate(alive_creatures):
             if creature.is_alive():  # Re-check after hunger tick
-                self._update_creature(creature, alive_creatures, delta_time)
+                # Determine if this creature should update its AI this frame
+                # Distribute updates based on creature index and frame count
+                should_update_ai = (i % self.ai_update_interval) == (self.frame_count % self.ai_update_interval)
+                
+                # Always update physics
+                creature.spatial.update(delta_time)
+                
+                # Update AI/Behavior only on its slice
+                if should_update_ai:
+                    # Pass larger delta_time to compensate for skipped frames in logic
+                    # This ensures cooldowns and timers tick correctly
+                    ai_delta_time = delta_time * self.ai_update_interval
+                    self._update_creature_logic(creature, alive_creatures, ai_delta_time)
+                
+                # Handle movement towards target (interpolated every frame)
+                # Update movement target if tracking a dynamic entity
+                if creature.current_movement_entity:
+                    creature.current_movement_target = creature.current_movement_entity.position
+                
+                if creature.current_movement_target:
+                    creature.spatial.move_towards(
+                        creature.current_movement_target, 
+                        delta_time=delta_time,
+                        stopping_distance=creature.target_stopping_distance
+                    )
+                
+                # Apply cached separation force (every frame)
+                if creature.current_separation_force.magnitude() > 0:
+                    creature.spatial.velocity = creature.spatial.velocity + creature.current_separation_force
+                    # Re-clamp velocity
+                    if creature.spatial.velocity.magnitude() > creature.spatial.max_speed:
+                        creature.spatial.velocity = creature.spatial.velocity.normalized() * creature.spatial.max_speed
+                    
+                # Keep within bounds
+                self.arena.apply_boundary_repulsion(creature.spatial)
+                creature.spatial.position = self.arena.clamp_position(creature.spatial.position)
+                
+                # Check for nearby pellets to collect (and trigger pollination)
+                self._check_pellet_collection(creature)
+                
+                # Attempt combat (every frame, not just during AI update)
+                if creature.target and creature.target.is_alive() and creature.can_attack(self.current_time):
+                    self._attempt_attack(creature, creature.target)
+                
+                # Update spatial grid with new position
+                self.creature_grid.update(creature, creature.spatial.position)
+                
+                # Check for movement and emit event (throttled)
+                # We don't want to emit events every frame for every creature, it's too much
+                # So maybe only emit if moved significantly?
+                # Or just rely on the renderer to show movement and skip the event spam?
+                # The original code emitted CREATURE_MOVE events. Let's keep it but maybe throttle?
+                # For now, let's skip emitting CREATURE_MOVE every frame to save performance.
+                # It's mostly for the log/debug anyway.
+                pass
         
         # Check for breeding opportunities (periodically)
         if self.current_time - self.last_breeding_check >= self.breeding_cooldown:
@@ -553,13 +695,20 @@ class SpatialBattle:
         for creature in alive_creatures:
             self._process_status_effects(creature)
     
-    def _update_creature(
+    def _update_creature_logic(
         self,
         creature: BattleCreature,
         all_alive: List[BattleCreature],
         delta_time: float
     ):
-        """Update a single creature's AI, movement, and combat using attention system."""
+        """
+        Update a single creature's AI (attention, targeting).
+        
+        This is computationally expensive so it's called less frequently.
+        """
+        # Note: last_attack_time and last_retarget_time are timestamps, not counters.
+        # They are compared against self.current_time, so we don't increment them here.
+        
         # Get other creatures as potential targets/allies
         other_creatures = [c for c in all_alive if c != creature]
         
@@ -593,15 +742,19 @@ class SpatialBattle:
         nearby_enemies = self._get_enemies(creature, other_creatures, self.combat_config.close_combat_range * 2)
         nearby_allies = self._get_allies(creature, other_creatures, self.combat_config.support_range)
         
-        if hp_percent < 0.3 or len(nearby_enemies) > len(nearby_allies) + 2:
+        # Only flee if BOTH low HP AND outnumbered (not just one condition)
+        is_low_hp = hp_percent < 0.3
+        is_outnumbered = len(nearby_enemies) > len(nearby_allies) + 2
+        
+        if is_low_hp and is_outnumbered:
             flee_urgency = 1.0
             if hp_percent < 0.15:  # Critical health
                 flee_urgency = 3.0
             elif hp_percent < 0.25:  # Low health
                 flee_urgency = 2.0
             
-            # Increase urgency if outnumbered
-            if len(nearby_enemies) > len(nearby_allies) + 2:
+            # Increase urgency if heavily outnumbered
+            if len(nearby_enemies) > len(nearby_allies) + 3:
                 flee_urgency *= 1.5
             
             stimuli_priorities[StimulusType.FLEEING] = creature.attention.calculate_effective_priority(
@@ -689,13 +842,17 @@ class SpatialBattle:
             self._emit_event(BattleEvent(
                 event_type=BattleEventType.ATTENTION_CHANGE,
                 actor=creature,
-                message=f"{creature.creature.name} switched focus: {previous_focus.value} → {current_focus.value}",
+                message=f"{creature.creature.name} switched focus: {previous_focus.value}     {current_focus.value}",
                 data={
                     'previous_focus': previous_focus.value,
                     'new_focus': current_focus.value,
                     'attention_debug': debug_info
                 }
             ))
+        
+        # DEBUG: Log focus and nearby enemies
+        if self.DEBUG:
+            self._log(f"[DEBUG] {creature.creature.name}: focus={current_focus.value}, nearby_enemies={len(nearby_enemies)}, target={creature.target.creature.name if creature.target else None}")
         
         # === ACT BASED ON CURRENT FOCUS ===
         movement_target = None
@@ -794,6 +951,24 @@ class SpatialBattle:
                     for ally in nearby_allies_list
                 )
                 
+                # Cache ally/enemy/family counts for use in damage calculation
+                # This avoids expensive recalculation on every attack
+                creature._cached_allies_count = len(nearby_allies_list)
+                creature._cached_enemies_count = len(nearby_enemies_list)
+                creature._cached_family_count = sum(
+                    1 for ally in nearby_allies_list
+                    if creature.creature.relationships.has_relationship(
+                        ally.creature.creature_id,
+                        RelationshipType.PARENT
+                    ) or creature.creature.relationships.has_relationship(
+                        ally.creature.creature_id,
+                        RelationshipType.CHILD
+                    ) or creature.creature.relationships.has_relationship(
+                        ally.creature.creature_id,
+                        RelationshipType.SIBLING
+                    )
+                )
+                
                 context = CombatContext(
                     nearby_allies=len(nearby_allies_list),
                     nearby_enemies=len(nearby_enemies_list),
@@ -842,11 +1017,30 @@ class SpatialBattle:
                 if self.DEBUG:
                     self._log(f"[debug:filtered_targets] attacker={creature.creature.name}[id={id(creature)}] -> {filtered_info}")
 
+
                 # Ensure selected_target is defined even if no filtered targets found
                 selected_target = None
 
-                # Select best target using new system
-                if filtered_targets:
+                # Check if creature should avoid combat based on traits and state
+                hunger_percent = creature.creature.hunger / max(1, creature.creature.max_hunger)
+                should_avoid = self.trait_effects.should_avoid_combat(
+                    creature.creature,
+                    hunger_level=hunger_percent,
+                    allies_nearby=len(nearby_allies_list)
+                )
+                
+                # If creature should avoid combat, skip targeting unless already under attack
+                if should_avoid and not (creature.target and creature.target.target == creature):
+                    # Not being attacked, so avoid combat
+                    selected_target = None
+                    creature.target = None
+                    # Set to foraging or idle instead
+                    creature.attention.set_focus(
+                        StimulusType.FORAGING if hunger_percent < 0.6 else StimulusType.IDLE,
+                        self.current_time
+                    )
+                elif filtered_targets:
+                    # Select best target using new system
                     selected_target = CombatTargetingSystem.select_target(
                         creature,
                         filtered_targets,
@@ -871,7 +1065,7 @@ class SpatialBattle:
                     creature.target = new_target
                     creature.last_retarget_time = self.current_time
 
-                # If we cleared the target, try relationship-driven fallbacks (3 → 2 → 1),
+                # If we cleared the target, try relationship-driven fallbacks (3     2     1),
                 # then finally fall back to attention-priorities / exploring.
                 if creature.target is None:
                     try:
@@ -945,7 +1139,7 @@ class SpatialBattle:
                                     break
 
                         if joined:
-                            # We set a target by joining an ally's fight — skip other fallbacks
+                            # We set a target by joining an ally's fight     skip other fallbacks
                             pass
                         else:
                             # -----------------------------------------------------------------
@@ -1065,6 +1259,17 @@ class SpatialBattle:
                         creature.attention.set_focus(StimulusType.EXPLORING, self.current_time)
                         creature.target = None
                         # let behavior.get_movement_target handle the rest
+                
+                # CRITICAL FALLBACK: If still no target and there are enemies nearby, pick nearest
+                # This ensures creatures will fight even without special traits or relationships
+                if creature.target is None and filtered_targets:
+                    nearest_enemy = min(
+                        filtered_targets,
+                        key=lambda e: creature.spatial.distance_to(e.spatial)
+                    )
+                    creature.target = nearest_enemy
+                    creature.last_retarget_time = self.current_time
+                    creature.attention.set_focus(StimulusType.COMBAT, self.current_time)
 
             # Move towards target
             if creature.target and creature.target.is_alive():
@@ -1104,10 +1309,18 @@ class SpatialBattle:
                 resource_positions
             )
         
-        # Move towards target with smooth acceleration
-        old_pos = (creature.spatial.position.x, creature.spatial.position.y)
+        # Set movement target and stopping distance for the main loop to handle
+        creature.current_movement_target = movement_target
+        
+        # Check if we are chasing a dynamic entity (smooth movement)
+        creature.current_movement_entity = None
+        if movement_target and creature.target and creature.target.is_alive():
+            # If the movement target matches our target's position, track the entity directly
+            if movement_target == creature.target.spatial.position:
+                creature.current_movement_entity = creature.target.spatial
+        
         if movement_target:
-            # Apply environmental movement modifiers
+            # Apply environmental movement modifiers (affect max speed)
             movement_speed_modifier = 1.0
             if self.environment:
                 movement_speed_modifier = self.environment.get_combined_movement_modifier(
@@ -1118,98 +1331,71 @@ class SpatialBattle:
                     creature, creature.spatial.position
                 )
             
-            # Temporarily adjust max speed for this movement
-            original_max_speed = creature.spatial.max_speed
-            creature.spatial.max_speed *= movement_speed_modifier
+            # Temporarily adjust max speed for this movement (persists until next logic update)
+            # Note: This might be overwritten if we don't store original max speed somewhere safe
+            # But for now, let's just modify it. The original code restored it at the end of the function.
+            # Since we are staggering, we should probably set it and leave it?
+            # Or better: The main loop uses creature.spatial.max_speed.
+            # If we change it here, it stays changed for 4 frames. That's actually good!
+            # But we need to know what the *base* max speed is to restore it.
+            # creature.spatial.max_speed is the current max speed.
+            # Let's assume creature.creature.stats.speed is the source of truth?
+            # BattleCreature init: max_speed=creature.stats.speed / 4.0
+            base_max_speed = creature.creature.stats.speed / 4.0
+            creature.spatial.max_speed = base_max_speed * movement_speed_modifier
             
             # Determine stopping distance based on target type
-            # When moving towards another creature (combat or fleeing), maintain distance to prevent overlap
-            # When moving towards resources or wandering, allow getting very close
             stopping_distance = 0.0
             if creature.target and creature.target.is_alive():
-                # Moving towards enemy - stop at sum of radii to prevent constant overlap/separation
-                # Add small buffer for attack range
+                # Moving towards enemy - stop at sum of radii to prevent overlap
                 stopping_distance = creature.spatial.radius + creature.target.spatial.radius + 0.5
             
-            creature.spatial.move_towards(movement_target, delta_time=delta_time, stopping_distance=stopping_distance)
+            creature.target_stopping_distance = stopping_distance
             
             # Check if creature is engaged in combat with target
-            # Combat engagement reduces separation to allow melee attacks
             if creature.target and creature.target.is_alive():
                 distance_to_target = creature.spatial.distance_to(creature.target.spatial)
                 creature.combat_engaged = distance_to_target <= creature.combat_engagement_range
             else:
                 creature.combat_engaged = False
             
-            # Apply collision avoidance - check nearby creatures and apply separation forces
-            # Use spatial grid for efficient proximity queries
+            # Apply collision avoidance - check nearby creatures and calculate separation forces
+            # We calculate the total force here and apply it every frame in the main loop
             nearby_creatures = self.creature_grid.query_radius(
                 creature.spatial.position,
-                radius=2.5,  # Check creatures within 2.5 units
+                radius=2.5,
                 exclude={creature}
             )
             
-            # Apply separation force for each nearby creature
-            # Reduce separation when combat engaged to allow attacks
+            total_separation = Vector2D(0, 0)
             for nearby in nearby_creatures:
                 if nearby.is_alive():
-                    # If combat engaged with this specific target, greatly reduce separation
+                    force = Vector2D(0, 0)
                     if creature.combat_engaged and nearby == creature.target:
-                        # Minimal separation for combat target to allow attack
-                        creature.spatial.apply_separation_force(nearby.spatial, strength=0.3)
+                        force = creature.spatial.calculate_separation_force(nearby.spatial, strength=0.3)
                     else:
-                        # Normal separation for other creatures
-                        creature.spatial.apply_separation_force(nearby.spatial, strength=1.5)
+                        force = creature.spatial.calculate_separation_force(nearby.spatial, strength=1.5)
+                    
+                    total_separation = total_separation + force
                         
-                        # Form friendships during peaceful proximity (not in combat with each other)
-                        # Only process friendships occasionally to avoid overhead
-                        if hasattr(creature, 'last_friendship_check'):
-                            time_since_check = self.current_time - creature.last_friendship_check
-                        else:
-                            creature.last_friendship_check = 0
-                            time_since_check = 999  # Force first check
-                        
-                        if time_since_check >= 2.0:  # Check every 2 seconds (increased frequency)
-                            creature.last_friendship_check = self.current_time
-                            # Don't form friendship if they're actively targeting each other
-                            actively_fighting = (creature.target == nearby or nearby.target == creature)
-                            if not actively_fighting and not self._is_ally(creature, nearby):
-                                # Higher chance of forming friendship when near peacefully
-                                if random.random() < 0.25:  # 25% chance per check (increased from 15%)
-                                    creature.creature.relationships.record_positive_interaction(
-                                        nearby.creature.creature_id,
-                                        "peaceful_proximity"
-                                    )
+                    # Form friendships logic (kept from original)
+                    if hasattr(creature, 'last_friendship_check'):
+                        time_since_check = self.current_time - creature.last_friendship_check
+                    else:
+                        creature.last_friendship_check = 0
+                        time_since_check = 999
+                    
+                    if time_since_check >= 2.0:
+                        creature.last_friendship_check = self.current_time
+                        actively_fighting = (creature.target == nearby or nearby.target == creature)
+                        if not actively_fighting and not self._is_ally(creature, nearby):
+                            creature.creature.relationships.record_positive_interaction(
+                                nearby.creature.creature_id,
+                                "peaceful_proximity"
+                            )
             
-            # Apply boundary repulsion to prevent getting stuck on walls
-            self.arena.apply_boundary_repulsion(creature.spatial, margin=3.0, strength=1.2)
-            
-            # Clamp velocity to max speed after all forces applied
-            # This prevents separation/boundary forces from creating excessive velocity
-            velocity_magnitude = creature.spatial.velocity.magnitude()
-            if velocity_magnitude > creature.spatial.max_speed:
-                creature.spatial.velocity = creature.spatial.velocity.normalized() * creature.spatial.max_speed
-            
-            # Restore original max speed
-            if self.environment:
-                creature.spatial.max_speed = original_max_speed
-            
-            creature.spatial.update(delta_time)
-            
-            # Keep within bounds
-            creature.spatial.position = self.arena.clamp_position(creature.spatial.position)
-            
-            # Update spatial grid with new position
-            self.creature_grid.update(creature, creature.spatial.position)
-            
-            new_pos = (creature.spatial.position.x, creature.spatial.position.y)
-            if old_pos != new_pos:
-                self._emit_event(BattleEvent(
-                    event_type=BattleEventType.CREATURE_MOVE,
-                    actor=creature,
-                    message=f"{creature.creature.name} moved to ({new_pos[0]:.1f}, {new_pos[1]:.1f})",
-                    data={'old_position': old_pos, 'new_position': new_pos}
-                ))
+            # Store the calculated separation force
+            creature.current_separation_force = total_separation
         
         # Check for resource collection
         resources_to_remove = []
@@ -1287,15 +1473,75 @@ class SpatialBattle:
                                 'palatability': palatability
                             }
                         ))
+                        
+                        # Food sharing behavior - check if creature should share with nearby allies
+                        if creature.creature.hunger > creature.creature.max_hunger * 0.6:  # Only share if well-fed
+                            nearby_creatures = self.creature_grid.query_radius(
+                                creature.spatial.position,
+                                radius=10.0,
+                                exclude={creature}
+                            )
+                            
+                            for nearby in nearby_creatures:
+                                if not nearby.is_alive():
+                                    continue
+                                
+                                # Check if ally
+                                if not self._is_ally(creature, nearby):
+                                    continue
+                                
+                                # Check if ally is hungry
+                                nearby_hunger_percent = nearby.creature.hunger / max(1, nearby.creature.max_hunger)
+                                if nearby_hunger_percent > 0.4:  # Not hungry enough
+                                    continue
+                                
+                                # Check willingness to share based on traits
+                                is_family = creature.creature.relationships.has_relationship(
+                                    nearby.creature.creature_id,
+                                    RelationshipType.PARENT
+                                ) or creature.creature.relationships.has_relationship(
+                                    nearby.creature.creature_id,
+                                    RelationshipType.CHILD
+                                ) or creature.creature.relationships.has_relationship(
+                                    nearby.creature.creature_id,
+                                    RelationshipType.SIBLING
+                                )
+                                
+                                sharing_willingness = self.trait_effects.get_food_sharing_willingness(
+                                    creature.creature,
+                                    target_is_family=is_family
+                                )
+                                
+                                if random.random() < sharing_willingness:
+                                    # Share food!
+                                    share_amount = min(20, creature.creature.hunger // 4)
+                                    creature.creature.hunger -= share_amount
+                                    nearby.creature.hunger = min(
+                                        nearby.creature.max_hunger,
+                                        nearby.creature.hunger + share_amount
+                                    )
+                                    
+                                    self._log(f"{creature.creature.name} shared food with {nearby.creature.name}!")
+                                    self._emit_event(BattleEvent(
+                                        event_type=BattleEventType.RESOURCE_COLLECTED,
+                                        actor=creature,
+                                        target=nearby,
+                                        message=f"{creature.creature.name} shared food with {nearby.creature.name}!",
+                                        data={'shared_amount': share_amount}
+                                    ))
+                                    
+                                    # Strengthen relationship
+                                    rel = creature.creature.relationships.get_relationship(nearby.creature.creature_id)
+                                    if rel:
+                                        rel.record_cooperative_behavior("food_shared")
+                                    
+                                    break  # Only share with one creature per eating event
+                        
                         break  # Only collect one resource per update
         
         # Remove collected resources
         for resource in resources_to_remove:
             self.arena.resources.remove(resource)
-        
-        # Attempt combat
-        if creature.target and creature.can_attack(self.current_time):
-            self._attempt_attack(creature, creature.target)
     
     def _is_ally(self, creature: BattleCreature, other: BattleCreature) -> bool:
         """
@@ -1452,6 +1698,8 @@ class SpatialBattle:
         """Attempt an attack from attacker to defender."""
         # Safety check: Never attack self
         if attacker == defender:
+            if self.DEBUG:
+                self._log(f"[DEBUG] {attacker.creature.name} tried to attack self - blocked")
             return
         
         # Choose ability
@@ -1466,20 +1714,28 @@ class SpatialBattle:
             # Basic attack
             ability = Ability(name="Basic Attack", power=10, accuracy=100)
         
-        # Check range - use config values with improved defaults
+        # Check range - INCREASED from 3.0 to 4.5 to account for separation forces
         # Attack ranges should be larger than separation force threshold (2.5) to allow attacks
-        attack_range = self.combat_config.base_attack_range_melee  # Default 3.0
+        attack_range = 4.5  # Increased from 3.0 - melee range
         if ability.ability_type == AbilityType.PHYSICAL:
-            attack_range = self.combat_config.base_attack_range_melee  # 3.0 - melee range
+            attack_range = 4.5  # Increased from 3.0 - melee range
         elif ability.ability_type == AbilityType.SPECIAL:
             attack_range = self.combat_config.base_attack_range_ranged  # 8.0 - ranged attack
         
         distance = attacker.spatial.distance_to(defender.spatial)
         
+        if self.DEBUG and random.random() < 0.05:  # 5% chance to log
+            self._log(f"[DEBUG] {attacker.creature.name} attempting {ability.name} on {defender.creature.name} at distance {distance:.2f} (range: {attack_range})")
+        
         if distance > attack_range:
+            # Debug: Log why attack failed
+            if self.DEBUG and random.random() < 0.05:  # 5% chance to log
+                self._log(f"[DEBUG] {attacker.creature.name} too far to attack {defender.creature.name}: {distance:.2f} > {attack_range}")
             return  # Too far to attack
         
         # Execute attack
+        if self.DEBUG and random.random() < 0.1:  # 10% chance to log successful attacks
+            self._log(f"[DEBUG] {attacker.creature.name} EXECUTING {ability.name} on {defender.creature.name}!")
         self._execute_ability(attacker, defender, ability)
         attacker.last_attack_time = self.current_time
     
@@ -1536,7 +1792,7 @@ class SpatialBattle:
         
         # Apply damage or effects
         if ability.ability_type in [AbilityType.PHYSICAL, AbilityType.SPECIAL]:
-            damage, was_critical = self._calculate_damage(attacker.creature, defender.creature, ability)
+            damage, was_critical = self._calculate_damage(attacker, defender, ability)
             
             # Apply relationship-based damage modifiers
             damage = self._apply_relationship_damage_modifier(attacker, defender, damage)
@@ -1545,7 +1801,7 @@ class SpatialBattle:
             health_before = defender.creature.stats.hp
             actual_damage = defender.creature.stats.take_damage(damage)
             health_after = defender.creature.stats.hp
-            self._log(f"{defender.creature.name} takes {actual_damage} damage! (HP: {defender.creature.stats.hp}/{defender.creature.stats.max_hp})")
+            self._log(f"{defender.creature.name} takes {int(actual_damage)} damage! (HP: {int(defender.creature.stats.hp)}/{int(defender.creature.stats.max_hp)})")
             
             # Record injury for inspector stats
             damage_type = DamageType.PHYSICAL if ability.ability_type == AbilityType.PHYSICAL else DamageType.SPECIAL
@@ -1639,8 +1895,8 @@ class SpatialBattle:
     
     def _calculate_damage(
         self,
-        attacker: Creature,
-        defender: Creature,
+        attacker: BattleCreature,
+        defender: BattleCreature,
         ability: Ability
     ) -> Tuple[int, bool]:
         """
@@ -1650,12 +1906,12 @@ class SpatialBattle:
             Tuple of (damage, was_critical)
         """
         base_damage = ability.calculate_damage(
-            attacker.stats.attack,
-            defender.stats.defense
+            attacker.creature.stats.attack,
+            defender.creature.stats.defense
         )
         
         # Type effectiveness
-        effectiveness = self._get_type_effectiveness(attacker, defender)
+        effectiveness = self._get_type_effectiveness(attacker.creature, defender.creature)
         damage = int(base_damage * effectiveness)
         
         if effectiveness > 1.0:
@@ -1679,7 +1935,7 @@ class SpatialBattle:
         # Critical hit with living world modifiers
         crit_chance = 0.0625  # Base 6.25% chance
         if self.enhancer:
-            crit_chance += self.enhancer.calculate_critical_chance_modifier(attacker)
+            crit_chance += self.enhancer.calculate_critical_chance_modifier(attacker.creature)
         
         is_critical = random.random() < crit_chance
         if is_critical:
@@ -1690,14 +1946,56 @@ class SpatialBattle:
                 message="Critical hit!"
             ))
         
+        
         # Apply living world damage modifiers
         if self.enhancer:
             damage = self.enhancer.calculate_damage_modifier(
-                attacker,
-                defender,
+                attacker.creature,
+                defender.creature,
                 damage,
                 is_critical
             )
+        
+        # Apply trait interaction_effects modifiers (pack hunter, loner, etc.)
+        # Use cached ally/enemy data from attacker's BattleCreature to avoid expensive queries
+        # These are updated during creature logic updates, not on every attack
+        allies_nearby_count = 0
+        enemies_nearby_count = 0
+        family_nearby_count = 0
+        
+        # Try to use cached data if available (set during _update_creature_logic)
+        if hasattr(attacker, '_cached_allies_count'):
+            allies_nearby_count = attacker._cached_allies_count
+            enemies_nearby_count = attacker._cached_enemies_count
+            family_nearby_count = attacker._cached_family_count
+        else:
+            # Fallback: calculate now (but this is expensive)
+            allies_nearby = self._get_allies(attacker, self._creatures, self.combat_config.support_range)
+            enemies_nearby = self._get_enemies(attacker, self._creatures, self.combat_config.support_range)
+            family_nearby_count = sum(
+                1 for ally in allies_nearby
+                if attacker.creature.relationships.has_relationship(
+                    ally.creature.creature_id,
+                    RelationshipType.PARENT
+                ) or attacker.creature.relationships.has_relationship(
+                    ally.creature.creature_id,
+                    RelationshipType.CHILD
+                ) or attacker.creature.relationships.has_relationship(
+                    ally.creature.creature_id,
+                    RelationshipType.SIBLING
+                )
+            )
+            allies_nearby_count = len(allies_nearby)
+            enemies_nearby_count = len(enemies_nearby)
+        
+        trait_modifier = self.trait_effects.get_combat_damage_modifier(
+            attacker.creature,
+            defender.creature,
+            allies_nearby=allies_nearby_count,
+            enemies_nearby=enemies_nearby_count,
+            family_nearby=family_nearby_count
+        )
+        damage = int(damage * trait_modifier)
         
         return max(1, int(damage)), is_critical
     
@@ -1988,6 +2286,59 @@ class SpatialBattle:
         for pellet in pellets_to_add:
             self.arena.add_pellet(pellet)
     
+    def _check_pellet_collection(self, creature: BattleCreature):
+        """
+        Check if creature is near any pellets and collect them.
+        Also triggers pollination for the grass growth system.
+        
+        Args:
+            creature: The creature to check for pellet collection
+        """
+        if not self.arena.resources:
+            return
+        
+        COLLECTION_RADIUS = 1.5  # Distance at which creature can collect pellet
+        
+        # Find nearby pellets
+        pellets_to_remove = []
+        for resource in self.arena.resources:
+            resource_pos = self.arena.get_resource_position(resource)
+            distance = creature.spatial.position.distance_to(resource_pos)
+            
+            if distance <= COLLECTION_RADIUS:
+                # Creature is close enough to collect
+                if isinstance(resource, Pellet):
+                    # Check if creature can/will eat this pellet
+                    if creature.creature.can_eat_pellet(resource.traits.toxicity, resource.traits.palatability):
+                        # Eat the pellet
+                        hunger_restored = creature.creature.eat(
+                            food_value=int(resource.get_nutritional_value()),
+                            food_type="plant",
+                            toxicity=resource.traits.toxicity,
+                            palatability=resource.traits.palatability
+                        )
+                        
+                        if hunger_restored > 0:
+                            # Successfully ate the pellet
+                            pellets_to_remove.append(resource)
+                            
+                            # Notify living world enhancer
+                            if self.enhancer:
+                                self.enhancer.on_pellet_eaten(resource, creature.creature)
+                            
+                            # Emit event
+                            self._emit_event(BattleEvent(
+                        data={
+                            'parent_id': resource.pellet_id,
+                            'offspring_id': new_pellet.pellet_id,
+                            'position': (new_pellet.x, new_pellet.y)
+                        }
+                    ))
+        
+        # Remove collected pellets
+        for pellet in pellets_to_remove:
+            self.arena.remove_resource(pellet)
+    
     def _process_status_effects(self, creature: BattleCreature):
         """Process status effects (simplified for spatial combat)."""
         # Status effects would be processed here
@@ -2231,7 +2582,7 @@ class SpatialBattle:
                     if actual_damage > 0:
                         affected_count += 1
             
-            self._log(f"⚡ STORM! {affected_count} creatures caught outside safe zone took {damage} damage")
+            self._log(f"    STORM! {affected_count} creatures caught outside safe zone took {damage} damage")
             self._emit_event(BattleEvent(
                 event_type=BattleEventType.HAZARD_DAMAGE,
                 message=f"Storm hits the arena! {affected_count} creatures damaged",
@@ -2240,7 +2591,7 @@ class SpatialBattle:
         
         elif hazard == 'heat_wave':
             # Heat wave increases hunger depletion temporarily
-            self._log(f"🔥 HEAT WAVE! All creatures' hunger depletes faster")
+            self._log(f"     HEAT WAVE! All creatures' hunger depletes faster")
             self._emit_event(BattleEvent(
                 event_type=BattleEventType.HAZARD_DAMAGE,
                 message="Heat wave strikes! Hunger increases faster",
@@ -2260,7 +2611,7 @@ class SpatialBattle:
                     if self.arena.resources:
                         self.arena.resources.pop()
                 
-                self._log(f"🌾 RESOURCE SCARCITY! {remove_count} food sources disappeared")
+                self._log(f"     RESOURCE SCARCITY! {remove_count} food sources disappeared")
                 self._emit_event(BattleEvent(
                     event_type=BattleEventType.HAZARD_DAMAGE,
                     message=f"Resource scarcity! {remove_count} food sources vanish",
@@ -2301,7 +2652,7 @@ class SpatialBattle:
             
             self.arena.add_pellet(pellet)
         
-        self._log(f"🍎 COOPERATIVE FOOD! Resource cluster of {cluster_size} pellets appeared")
+        self._log(f"     COOPERATIVE FOOD! Resource cluster of {cluster_size} pellets appeared")
         self._emit_event(BattleEvent(
             event_type=BattleEventType.PELLET_SPAWN,
             message=f"Rich food cluster spawned! {cluster_size} high-quality pellets",
