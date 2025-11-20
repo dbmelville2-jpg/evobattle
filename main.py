@@ -59,6 +59,13 @@ from src.utils.name_generator import NameGenerator
 
 # New imports to wire the TraitInjection system
 from src.models.trait_analytics import TraitAnalytics
+except Exception:
+    # Fallback minimal implementation if module not present
+    class TraitAnalytics:
+        def __init__(self, *args, **kwargs):
+            pass
+
+try:
 from src.systems.trait_injection import TraitInjectionSystem, InjectionConfig
 from src.systems.breeding import Breeding
 
