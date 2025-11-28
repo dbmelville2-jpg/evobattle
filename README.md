@@ -5,17 +5,6 @@ This is an evolution-based battle game where players can engage in battles, bree
 
 ## Features
 
-### AI-Powered Battle Stories ✓ NEW!
-Transform battles into shareable narratives with AI-generated story summaries:
-- **Automatic Story Generation**: AI creates engaging battle reports every 5 minutes (configurable)
-- **Multiple Tones**: Choose from dramatic, heroic, comedic, serious, or documentary styles
-- **Story Viewer UI**: Dedicated panel with scrollable text, tone selection, and export options
-- **Export & Share**: Save stories as TXT or Markdown files
-- **Key Moments**: Highlights MVPs, turning points, alliances, betrayals, and dramatic events
-- **Works Offline**: Fallback mode generates structured summaries without AI API
-
-See [Battle Story Mode Documentation](BATTLE_STORY_MODE_DOCUMENTATION.md) for details.
-
 ### Living World System ✓
 Transform battles into emergent narratives where every creature matters:
 - **Individual Histories**: Track every attack, kill, achievement, and life event
@@ -26,7 +15,7 @@ Transform battles into emergent narratives where every creature matters:
 - **Creature Inspector UI**: Click creatures to see their full history and stats
 - **Emergent Stories**: Watch legendary creatures rise and dramatic rivalries form
 
-See [Living World Documentation](LIVING_WORLD_DOCUMENTATION.md) for details.
+See [Living World Documentation](docs/LIVING_WORLD_DOCUMENTATION.md) for details.
 
 ### Battle System ✓
 A comprehensive turn-based combat engine featuring:
@@ -37,7 +26,7 @@ A comprehensive turn-based combat engine featuring:
 - Multiple ability types (physical, special, healing, buff, debuff)
 - Complete battle logging for analysis and replay
 
-See [Battle System Documentation](BATTLE_SYSTEM_DOCUMENTATION.md) for details.
+See [Battle System Documentation](docs/BATTLE_SYSTEM_DOCUMENTATION.md) for details.
 
 ### Creature System ✓
 Full creature management including:
@@ -47,7 +36,7 @@ Full creature management including:
 - Trait system for genetic characteristics
 - Evolution paths and breeding mechanics
 
-See [Core Models Documentation](MODELS_DOCUMENTATION.md) for details.
+See [Core Models Documentation](docs/MODELS_DOCUMENTATION.md) for details.
 
 ### Ecosystem Survival System ✓
 A complete survival ecosystem simulation featuring:
@@ -58,7 +47,7 @@ A complete survival ecosystem simulation featuring:
 - Dynamic behavior based on hunger levels
 - 15+ predefined ecosystem traits (Forager, Efficient Metabolism, Curious, etc.)
 
-See [Ecosystem Documentation](ECOSYSTEM_DOCUMENTATION.md) for details.
+See [Ecosystem Documentation](docs/ECOSYSTEM_DOCUMENTATION.md) for details.
 
 ### Environmental Simulation System ✓ NEW!
 Deep environmental interactions that affect creature survival and behavior:
@@ -70,7 +59,7 @@ Deep environmental interactions that affect creature survival and behavior:
 - **Integrated Effects**: Weather impacts hunger (0.8x-1.4x), terrain affects speed (0.3x-1.3x), hazards deal damage
 - **Trait-Based Adaptation**: Creatures with environmental traits get bonuses (Aquatic 2x speed in water, Fire Proof immunity, etc.)
 
-See [Environmental Simulation Documentation](ENVIRONMENTAL_SIMULATION_DOCUMENTATION.md) for details.
+See [Environmental Simulation Documentation](docs/ENVIRONMENTAL_SIMULATION_DOCUMENTATION.md) for details.
 
 ### Grass Growth Enhancement System ✓
 Dynamic pellet (food) growth using simulation-based mechanics:
@@ -81,7 +70,7 @@ Dynamic pellet (food) growth using simulation-based mechanics:
 - **Spatial Patterns**: Pellets cluster around death sites and herbivore paths
 - **Balanced Growth**: 100% increase over 30s with zones vs 40% baseline
 
-See [Grass Growth System Documentation](GRASS_GROWTH_SYSTEM.md) for details.
+See [Grass Growth System Documentation](docs/GRASS_GROWTH_SYSTEM.md) for details.
 
 ### Lethal Combat Traits ✓
 High-risk, high-reward combat traits that enable dramatic kills and apex predators:
@@ -91,7 +80,7 @@ High-risk, high-reward combat traits that enable dramatic kills and apex predato
 - **Scaling Effects**: Kill streaks, rage mode, fear auras
 - **Strategic Depth**: Counter-play and archetype diversity
 
-See [Lethal Combat Traits Documentation](LETHAL_COMBAT_TRAITS_DOCUMENTATION.md) for details.
+See [Lethal Combat Traits Documentation](docs/LETHAL_COMBAT_TRAITS_DOCUMENTATION.md) for details.
 
 ### Genetic Lineage System ✓
 An evolutionary ecosystem where creatures form dynamic genetic families:
@@ -102,9 +91,25 @@ An evolutionary ecosystem where creatures form dynamic genetic families:
 - Population analytics tracking dominant/extinct strains
 - Visual evolution through color spectrum changes
 
-See [Lineage System Documentation](LINEAGE_SYSTEM_DOCUMENTATION.md) for details.
+See [Lineage System Documentation](docs/LINEAGE_SYSTEM_DOCUMENTATION.md) for details.
 
 ## Quick Start
+
+## For Developers
+
+### Documentation
+- [**📚 Documentation Index**](docs/DOCUMENTATION_INDEX.md) - Complete guide to all documentation
+- [**🏗️ Systems Architecture**](SYSTEMS_ARCHITECTURE.md) - **NEW!** Master reference for all systems and interactions
+- [Living World](docs/LIVING_WORLD_DOCUMENTATION.md) - Creature histories, skills, personalities
+- [Battle System](docs/BATTLE_SYSTEM_DOCUMENTATION.md) - Complete battle system guide
+- [Ecosystem](docs/ECOSYSTEM_DOCUMENTATION.md) - Hunger, foraging, and survival
+- [Environmental Simulation](docs/ENVIRONMENTAL_SIMULATION_DOCUMENTATION.md) - Weather, terrain, hazards
+
+📁 **Note:** Historical documents are in [docs/archive/](docs/archive/)
+
+### Running Examples
+
+All examples should be run from the project root directory using Python's module syntax:
 
 ```python
 from src.models.creature import Creature, CreatureType
@@ -127,46 +132,6 @@ enemy.add_ability(create_ability('tackle'))
 # Run battle
 battle = Battle([player], [enemy])
 winner = battle.simulate()
-
-print(f"Winner: {winner.name}")
-for log in battle.get_battle_log():
-    print(log)
-```
-
-## For Developers
-
-### Agent Coordination
-This project is developed by three specialist agents working in coordination:
-- **Core Gameplay Engineer** - Implements game mechanics, physics, and player interaction ([Issue #11](https://github.com/dbmelville2-jpg/evobattle/issues/11))
-- **Graphics & Rendering Agent** - Handles visual systems, animations, and UI ([Issue #12](https://github.com/dbmelville2-jpg/evobattle/issues/12))
-- **Data & Systems Agent** - Manages game state, persistence, and support systems ([Issue #13](https://github.com/dbmelville2-jpg/evobattle/issues/13))
-
-**Important Documentation:**
-- [**📚 Complete Documentation Index**](docs/DOCUMENTATION_INDEX.md) - Full guide to all documentation
-- [**Environmental Simulation Documentation**](ENVIRONMENTAL_SIMULATION_DOCUMENTATION.md) - **NEW!** Weather, terrain, day/night, and hazards
-- [**Battle Story Mode Documentation**](BATTLE_STORY_MODE_DOCUMENTATION.md) - AI-powered battle narratives
-- [**Living World Documentation**](LIVING_WORLD_DOCUMENTATION.md) - Creature histories, skills, personalities, relationships
-- [Battle System Documentation](BATTLE_SYSTEM_DOCUMENTATION.md) - Complete battle system guide
-- [Core Models Documentation](MODELS_DOCUMENTATION.md) - Creature, stats, and ability systems
-- [Ecosystem Documentation](ECOSYSTEM_DOCUMENTATION.md) - Hunger, foraging, and survival mechanics
-- [Lineage System Documentation](LINEAGE_SYSTEM_DOCUMENTATION.md) - Genetic strains and evolution
-- [Rendering Documentation](RENDERING_DOCUMENTATION.md) - Visual rendering and animation systems
-- [Agent Coordination Guide](AGENT_COORDINATION.md) - Team standards, interface contracts, and integration goals
-- [Integration Checklist](INTEGRATION_CHECKLIST.md) - Track implementation progress and integration milestones
-- [Project Architect Vision](https://github.com/dbmelville2-jpg/evobattle/issues/2) - Overall project leadership and vision
-
-📁 **Note:** Historical implementation documents, tuning guides, and architecture notes have been organized in [docs/archive/](docs/archive/) for reference.
-
-### Running Examples
-
-All examples should be run from the project root directory using Python's module syntax:
-
-```bash
-# Environmental Simulation demo (NEW!)
-python3 -m examples.environmental_demo  # Weather, terrain, day/night effects
-
-# Battle Story Mode demo
-python3 -m examples.battle_story_mode_demo  # AI-powered battle narratives
 
 # Living World demos
 python3 -m examples.living_world_demo              # Text-based: See histories and skills

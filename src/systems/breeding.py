@@ -128,6 +128,12 @@ class Breeding:
             strain_id=child_strain_id
         )
         
+        # Neural Brain Inheritance - Offspring inherit parent brains
+        if hasattr(parent1, 'brain') and hasattr(parent2, 'brain'):
+            if parent1.brain is not None and parent2.brain is not None:
+                # Offspring inherits blended parent brains with mutations
+                offspring.brain.inherit_from_parents(parent1.brain, parent2.brain)
+        
         return offspring
     
     def calculate_inherited_traits(

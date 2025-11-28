@@ -20,6 +20,7 @@ class BehaviorType(Enum):
     WANDERER = "wanderer"      # Moves randomly, explores
     HUNTER = "hunter"          # Targets weakest enemies
     FORAGER = "forager"        # Prioritizes seeking food/resources
+    BUILDING = "building"      # Gathering materials and constructing
 
 
 class SpatialBehavior:
@@ -207,7 +208,16 @@ class SpatialBehavior:
             if enemies:
                 return min(enemies, key=lambda e: entity.distance_to(e)).position
         
-        return None
+        # FALLBACK: If no specific behavior target, wander randomly
+        # This ensures creatures are ALWAYS doing something and never sit still
+        if not self.target_position or entity.position.distance_to(self.target_position) < 2.0:
+            # Set new random wander target
+            import random
+            self.target_position = Vector2D(
+                entity.position.x + random.uniform(-15, 15),
+                entity.position.y + random.uniform(-15, 15)
+            )
+        return self.target_position
     
     def should_use_ability(
         self,

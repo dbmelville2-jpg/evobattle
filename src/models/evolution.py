@@ -87,114 +87,11 @@ class EvolutionPath:
         return f"EvolutionPath({self.from_type} -> {self.to_type} @ Lv{self.min_level})"
 
 # ==============================================================================
-# DEPRECATED: GeneticsSystem - Use GeneticsEngine Instead
+# NOTE: GeneticsSystem has been removed (was deprecated)
 # ==============================================================================
-# This class has been superseded by GeneticsEngine (src/models/genetics.py)
-# which provides more advanced Mendelian genetics with dominant/recessive genes.
-#
-# MIGRATION GUIDE:
-# ----------------
-# Old code:
-#   from src.models.evolution import GeneticsSystem
-#   genetics = GeneticsSystem(mutation_rate=0.1)
-#   offspring = genetics.breed(parent1, parent2)
-#
-# New code:
-#   from src.systems.breeding import Breeding
-#   breeding = Breeding(mutation_rate=0.1, trait_inheritance_chance=0.8)
-#   offspring = breeding.breed_creatures(parent1, parent2)
-#
-# For direct access to genetics engine:
-#   from src.models.genetics import GeneticsEngine
-#   engine = GeneticsEngine(mutation_rate=0.1)
-#   offspring_genes = engine.combine_genes(parent1_genes, parent2_genes)
-#
-# This class is kept only for backward compatibility and will be removed
-# in a future version. Please update your code to use the new systems.
+# Use GeneticsEngine from src.models.genetics instead, or use the Breeding
+# system from src.systems.breeding for high-level breeding operations.
 # ==============================================================================
-
-
-class GeneticsSystem:
-    """
-    DEPRECATED: Use GeneticsEngine from src.models.genetics instead.
-    
-    This is a legacy genetics system maintained for backward compatibility.
-    It provides simple trait inheritance. For advanced Mendelian genetics
-    with dominant/recessive genes, use GeneticsEngine.
-    
-    Manages genetic inheritance and mutations for breeding.
-    """
-    
-    def __init__(self, mutation_rate: float = 0.1):
-        """
-        Initialize the genetics system.
-        
-        Args:
-            mutation_rate: Probability of mutations (0.0 to 1.0)
-        """
-        from .genetics import GeneticsEngine
-        # Delegate to the advanced genetics engine
-        self._engine = GeneticsEngine(mutation_rate=mutation_rate)
-        self.mutation_rate = mutation_rate
-    
-    def breed(
-        self,
-        parent1: Creature,
-        parent2: Creature,
-        offspring_name: str = "Offspring"
-    ) -> Creature:
-        """
-        Create offspring from two parent creatures.
-        
-        Args:
-            parent1: First parent
-            parent2: Second parent
-            offspring_name: Name for the offspring
-            
-        Returns:
-            New creature offspring
-        """
-        # Use the advanced genetics engine for trait combination
-        inherited_traits = self._engine.combine_traits(parent1, parent2, generation=0)
-        inherited_stats = self._engine.combine_stats(parent1, parent2)
-        
-        # Determine offspring type (inherit from one parent randomly)
-        offspring_type = random.choice([parent1.creature_type, parent2.creature_type])
-        
-        # Create offspring at level 1
-        offspring = Creature(
-            name=offspring_name,
-            creature_type=offspring_type,
-            level=1,
-            base_stats=inherited_stats,
-            traits=inherited_traits
-        )
-        
-        return offspring
-    
-    def _inherit_stats(self, parent1: Creature, parent2: Creature) -> Stats:
-        """DEPRECATED: Use GeneticsEngine.combine_stats() instead."""
-        return self._engine.combine_stats(parent1, parent2)
-    
-    def _inherit_traits(self, parent1: Creature, parent2: Creature) -> List[Trait]:
-        """DEPRECATED: Use GeneticsEngine.combine_traits() instead."""
-        return self._engine.combine_traits(parent1, parent2, generation=0)
-    
-    def _mutate_trait(self, trait: Trait) -> Trait:
-        """DEPRECATED: Use GeneticsEngine._mutate_trait() instead.
-        
-        This delegates to the canonical mutation helper to ensure breeding and
-        evolution use the same trade-off behavior.
-        """
-        try:
-            from ..systems.mutation import apply_tradeoff_mutation
-            return apply_tradeoff_mutation(trait, mutation_strength=self._engine.mutation_rate)
-        except Exception:
-            return self._engine._mutate_trait(trait)
-    
-    def __repr__(self):
-        """String representation."""
-        return f"GeneticsSystem(mutation_rate={self.mutation_rate}) [DEPRECATED - use GeneticsEngine]"
 
 
 class EvolutionSystem:

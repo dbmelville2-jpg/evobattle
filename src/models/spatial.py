@@ -7,7 +7,7 @@ in a 2D arena.
 
 import math
 from typing import Tuple, Optional, List, Union, TYPE_CHECKING, Dict, Set, TypeVar, Generic
-from dataclasses import dataclass
+from ..utils.jit_math import calculate_separation_force_fast
 
 if TYPE_CHECKING:
     from .pellet import Pellet
@@ -15,11 +15,16 @@ if TYPE_CHECKING:
 T = TypeVar('T')
 
 
-@dataclass
 class Vector2D:
     """2D vector for position and velocity."""
-    x: float = 0.0
-    y: float = 0.0
+    __slots__ = ['x', 'y']
+    
+    def __init__(self, x: float = 0.0, y: float = 0.0):
+        self.x = x
+        self.y = y
+
+    def __repr__(self):
+        return f"Vector2D(x={self.x}, y={self.y})"
     
     def __add__(self, other: 'Vector2D') -> 'Vector2D':
         return Vector2D(self.x + other.x, self.y + other.y)
@@ -53,7 +58,7 @@ class Vector2D:
     
     def distance_to(self, other: 'Vector2D') -> float:
         """Calculate distance to another vector."""
-        return (self - other).magnitude()
+        return math.sqrt((self.x - other.x)**2 + (self.y - other.y)**2)
     
     def to_tuple(self) -> Tuple[float, float]:
         """Convert to tuple."""
@@ -70,6 +75,7 @@ class SpatialEntity:
         radius: Collision radius
         max_speed: Maximum movement speed
     """
+    __slots__ = ['position', 'velocity', 'radius', 'max_speed', 'acceleration', 'damping']
     
     def __init__(
         self,
@@ -95,7 +101,12 @@ class SpatialEntity:
         """
         # Apply damping to velocity (exponential decay)
         damping_factor = self.damping ** delta_time
-        self.velocity = self.velocity * damping_factor
+        
+        # Velocity smoothing for momentum (reduces jitter from AI staggering)
+        # Blend 85% old velocity + 15% new velocity for smooth transitions
+        smoothing = 0.85
+        self.velocity.x = self.velocity.x * smoothing + (self.velocity.x * damping_factor) * (1 - smoothing)
+        self.velocity.y = self.velocity.y * smoothing + (self.velocity.y * damping_factor) * (1 - smoothing)
         
         # Update position
         self.position = self.position + (self.velocity * delta_time)
@@ -109,9 +120,27 @@ class SpatialEntity:
             speed: Movement speed (uses max_speed if None)
             delta_time: Time step for acceleration calculation (default 60fps = 0.016s)
             stopping_distance: Minimum distance to maintain from target (prevents jittering when close)
+                              Use negative value to disable stopping/deceleration (for wandering)
         """
         # Calculate distance to target
         distance_to_target = self.position.distance_to(target)
+        
+        # If stopping_distance is negative, disable all deceleration (for wandering/exploring)
+        if stopping_distance < 0:
+            # Just move at full speed towards target, no deceleration
+            speed = speed or self.max_speed
+            direction = (target - self.position).normalized()
+            desired_velocity = direction * speed
+            
+            # Smoothly accelerate towards desired velocity
+            velocity_change = (desired_velocity - self.velocity) * self.acceleration * delta_time
+            self.velocity = self.velocity + velocity_change
+            
+            # Clamp velocity to max speed
+            velocity_magnitude = self.velocity.magnitude()
+            if velocity_magnitude > self.max_speed:
+                self.velocity = self.velocity.normalized() * self.max_speed
+            return
         
         # If already within stopping distance, slow down instead of continuing to move
         if distance_to_target <= stopping_distance:
@@ -159,6 +188,8 @@ class SpatialEntity:
         """Check if another entity is within a specific range."""
         return self.distance_to(other) <= range_distance
     
+
+
     def calculate_separation_force(self, other: 'SpatialEntity', strength: float = 2.0) -> Vector2D:
         """
         Calculate the separation force vector without applying it.
@@ -170,22 +201,13 @@ class SpatialEntity:
         Returns:
             Vector2D representing the force
         """
-        distance = self.distance_to(other)
-        min_distance = self.radius + other.radius
-        
-        # Only apply separation if entities are too close
-        if distance < min_distance and distance > 0.01:  # Avoid division by zero
-            # Calculate separation direction (away from other entity)
-            separation_dir = (self.position - other.position).normalized()
-            
-            # Separation strength increases as entities get closer
-            # At min_distance, force is 0; at distance 0, force is at max
-            overlap = min_distance - distance
-            force_magnitude = (overlap / min_distance) * strength
-            
-            return separation_dir * force_magnitude
-            
-        return Vector2D(0, 0)
+        fx, fy = calculate_separation_force_fast(
+            self.position.x, self.position.y,
+            other.position.x, other.position.y,
+            self.radius, other.radius,
+            strength
+        )
+        return Vector2D(fx, fy)
 
     def apply_separation_force(self, other: 'SpatialEntity', strength: float = 2.0):
         """
@@ -450,8 +472,12 @@ class SpatialHashGrid(Generic[T]):
         cell_size: Size of each grid cell
         width: Total grid width
         height: Total grid height
-        grid: Dictionary mapping (grid_x, grid_y) to set of entities
+        grid: Dictionary mapping (cell_hash) to set of entities
     """
+    
+    # Large prime or multiplier for hashing coordinates into a single integer
+    # Assumes grid width < 1,000,000 cells
+    HASH_MULTIPLIER = 1000000
     
     def __init__(self, width: float, height: float, cell_size: float = 10.0):
         """
@@ -465,23 +491,24 @@ class SpatialHashGrid(Generic[T]):
         self.width = width
         self.height = height
         self.cell_size = cell_size
-        self.grid: Dict[Tuple[int, int], Set[T]] = {}
+        # Use integer keys for faster hashing than tuples
+        self.grid: Dict[int, Set[T]] = {}
         # Cache for entity positions to detect movement
-        self._entity_cells: Dict[T, Tuple[int, int]] = {}
+        self._entity_cells: Dict[T, int] = {}
     
-    def _get_cell_coords(self, position: Vector2D) -> Tuple[int, int]:
+    def _get_cell_hash(self, position: Vector2D) -> int:
         """
-        Convert world position to grid cell coordinates.
+        Convert world position to grid cell hash.
         
         Args:
             position: World position
             
         Returns:
-            Tuple of (cell_x, cell_y)
+            Integer hash of the cell coordinates
         """
         cell_x = int(position.x / self.cell_size)
         cell_y = int(position.y / self.cell_size)
-        return (cell_x, cell_y)
+        return cell_x + cell_y * self.HASH_MULTIPLIER
     
     def clear(self):
         """Clear all entities from the grid."""
@@ -496,19 +523,19 @@ class SpatialHashGrid(Generic[T]):
             entity: Entity to insert
             position: World position of the entity
         """
-        cell_coords = self._get_cell_coords(position)
+        cell_hash = self._get_cell_hash(position)
         
         # Remove from old cell if entity already exists
         if entity in self._entity_cells:
-            old_coords = self._entity_cells[entity]
-            if old_coords != cell_coords and old_coords in self.grid:
-                self.grid[old_coords].discard(entity)
+            old_hash = self._entity_cells[entity]
+            if old_hash != cell_hash and old_hash in self.grid:
+                self.grid[old_hash].discard(entity)
         
         # Add to new cell
-        if cell_coords not in self.grid:
-            self.grid[cell_coords] = set()
-        self.grid[cell_coords].add(entity)
-        self._entity_cells[entity] = cell_coords
+        if cell_hash not in self.grid:
+            self.grid[cell_hash] = set()
+        self.grid[cell_hash].add(entity)
+        self._entity_cells[entity] = cell_hash
     
     def remove(self, entity: T):
         """
@@ -518,11 +545,11 @@ class SpatialHashGrid(Generic[T]):
             entity: Entity to remove
         """
         if entity in self._entity_cells:
-            cell_coords = self._entity_cells[entity]
-            if cell_coords in self.grid:
-                self.grid[cell_coords].discard(entity)
-                if not self.grid[cell_coords]:
-                    del self.grid[cell_coords]
+            cell_hash = self._entity_cells[entity]
+            if cell_hash in self.grid:
+                self.grid[cell_hash].discard(entity)
+                if not self.grid[cell_hash]:
+                    del self.grid[cell_hash]
             del self._entity_cells[entity]
     
     def update(self, entity: T, position: Vector2D):
@@ -536,25 +563,29 @@ class SpatialHashGrid(Generic[T]):
             entity: Entity to update
             position: New world position
         """
-        new_coords = self._get_cell_coords(position)
+        # t0 = time.time()
+        new_hash = self._get_cell_hash(position)
         
         if entity in self._entity_cells:
-            old_coords = self._entity_cells[entity]
-            if old_coords == new_coords:
+            old_hash = self._entity_cells[entity]
+            if old_hash == new_hash:
                 # Still in same cell, no update needed
                 return
             
             # Remove from old cell
-            if old_coords in self.grid:
-                self.grid[old_coords].discard(entity)
-                if not self.grid[old_coords]:
-                    del self.grid[old_coords]
+            if old_hash in self.grid:
+                self.grid[old_hash].discard(entity)
+                if not self.grid[old_hash]:
+                    del self.grid[old_hash]
         
         # Add to new cell
-        if new_coords not in self.grid:
-            self.grid[new_coords] = set()
-        self.grid[new_coords].add(entity)
-        self._entity_cells[entity] = new_coords
+        if new_hash not in self.grid:
+            self.grid[new_hash] = set()
+        self.grid[new_hash].add(entity)
+        self._entity_cells[entity] = new_hash
+        # t1 = time.time()
+        # if (t1 - t0) * 1000 > 1.0:
+        #     print(f"Slow grid update: {(t1-t0)*1000:.2f}ms")
     
     def query_radius(
         self,
@@ -590,9 +621,9 @@ class SpatialHashGrid(Generic[T]):
         # Check each cell in the bounding box
         for cell_x in range(min_cell_x, max_cell_x + 1):
             for cell_y in range(min_cell_y, max_cell_y + 1):
-                cell_coords = (cell_x, cell_y)
-                if cell_coords in self.grid:
-                    for entity in self.grid[cell_coords]:
+                cell_hash = cell_x + cell_y * self.HASH_MULTIPLIER
+                if cell_hash in self.grid:
+                    for entity in self.grid[cell_hash]:
                         if entity not in exclude and entity not in seen:
                             # Optionally filter by exact distance
                             if exact_distance:
@@ -608,12 +639,16 @@ class SpatialHashGrid(Generic[T]):
                                 else:
                                     continue
                                 
-                                if position.distance_to(entity_pos) <= radius:
+                                # Inline distance check for performance
+                                dx = position.x - entity_pos.x
+                                dy = position.y - entity_pos.y
+                                if dx*dx + dy*dy <= radius * radius:
                                     results.append(entity)
                                     seen.add(entity)
                             else:
                                 results.append(entity)
                                 seen.add(entity)
+
         
         return results
     

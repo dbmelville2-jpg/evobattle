@@ -11,17 +11,84 @@ from .stats import Stats, StatModifier, StatGrowth
 from .ability import Ability
 from .trait import Trait
 from .history import CreatureHistory
-from .skills import SkillManager
+from .skills import SkillManager, SkillType
 from .personality import PersonalityProfile
 from .relationships import RelationshipManager
 from .relationship_metrics import AgentTraits, AgentSocialState
 from .injury_tracker import InjuryTracker
 from .interactions import InteractionTracker
+from .interactions import InteractionTracker
 from .combat_memory import CombatMemory
+from .disease import Infection, DiseaseType
+from .spatial import Vector2D
+from dataclasses import dataclass
+from .creature_brain import NeuralBrain
 
 # Base hunger depletion rate (hunger points per second).
-# Previous value: 1.0 — raise to increase hunger speed.
+# Previous value: 1.0  raise to increase hunger speed.
 HUNGER_BASE_DEPLETION = 2.0  # 1.5 hunger/sec -> 100 -> 0 in ~66.7s
+
+
+@dataclass
+class HazardMemory:
+    """
+    Tracks a creature's memory of a dangerous location.
+    
+    Attributes:
+        position: Location of the hazard
+        hazard_type: Type of hazard (e.g., 'fire', 'poison', 'spike')
+        danger_level: How dangerous (0.0-1.0, decays over time)
+        learned_from: How this was learned ('direct', 'death_observation', 'avoidance_observation')
+        witnessed_at: Simulation time when this was learned
+        confidence: How confident the creature is about this danger (0.0-1.0)
+    """
+    position: Vector2D
+    hazard_type: str
+    danger_level: float  # 0.0 to 1.0
+    learned_from: str  # 'direct', 'death_observation', 'avoidance_observation'
+    witnessed_at: float
+    confidence: float  # 0.0 to 1.0
+
+
+@dataclass
+class SocialMemory:
+    """
+    Tracks a creature's memory of interactions with another creature.
+    
+    Used to calculate neural inputs for social learning (familiarity, trust, threat).
+    
+    Attributes:
+        creature_id: ID of the other creature
+        interaction_count: Total number of interactions
+        cooperation_count: Number of cooperative interactions
+        conflict_count: Number of conflicts/attacks
+        last_interaction_time: When they last interacted
+        total_damage_received: Total damage received from this creature
+        total_damage_dealt: Total damage dealt to this creature
+    """
+    creature_id: str
+    interaction_count: int = 0
+    cooperation_count: int = 0
+    conflict_count: int = 0
+    last_interaction_time: float = 0.0
+    total_damage_received: float = 0.0
+    total_damage_dealt: float = 0.0
+    
+    def get_familiarity(self) -> float:
+        """Get familiarity score (0-1) based on interaction count."""
+        return min(self.interaction_count / 10.0, 1.0)
+    
+    def get_trust(self) -> float:
+        """Get trust score (0-1) based on cooperation ratio."""
+        total_interactions = max(1, self.interaction_count)
+        return self.cooperation_count / total_interactions
+    
+    def get_threat(self, max_hp: float) -> float:
+        """Get threat score (0-1) based on damage received."""
+        if max_hp <= 0:
+            return 0.0
+        return min(self.total_damage_received / max_hp, 1.0)
+
 
 
 class CreatureType:
@@ -220,10 +287,28 @@ class Creature:
         self.social_traits = AgentTraits.random()
         self.social_state = AgentSocialState()
         
-        # Recalculate stats with trait modifiers applied
-        if self.traits:
-            self.stats = self.get_effective_stats()
-    
+        # Building System
+        self.carried_materials = []  # List of BuildingMaterial objects
+        
+        # Disease System
+        self.active_infection: Optional[Infection] = None
+        self.disease_immunity: List[DiseaseType] = [] # Deprecated: Use immune_memory instead
+        
+        # New Immunity System
+        self.immune_memory: Dict[str, float] = {} # {disease_id: resistance_strength (0.0-1.0)}
+        self.base_immunity: float = 0.0 # Base resistance to all diseases (0.0-1.0)
+        
+        # Hazard Learning System (Smart trait)
+        self.hazard_memories: List[HazardMemory] = []  # Remembered dangerous locations
+        
+        # Social Learning System (Neural brain social inputs)
+        self.social_memory: Dict[str, SocialMemory] = {}  # {creature_id: SocialMemory}
+        
+        # Neural Network Brain (Learning system)
+        self.brain: Optional[NeuralBrain] = NeuralBrain.create_default()
+        
+        # Transient State (updated by battle system)
+        self.current_focus: str = "IDLE"
     def get_effective_stats(self) -> Stats:
         """
         Calculate effective stats with all modifiers applied.
@@ -469,14 +554,16 @@ class Creature:
             RGB color tuple (r, g, b) with values 0-255
         """
         # Saturation based on HP ratio (0.3 to 1.0 for visibility)
-        saturation = 0.3 + 0.7 * (self.stats.hp / self.stats.max_hp)
+        hp_ratio = max(0.0, min(1.0, self.stats.hp / max(1, self.stats.max_hp)))
+        saturation = 0.3 + 0.7 * hp_ratio
         
         # Value based on hunger (0.3 to 1.0 for visibility)
-        value = 0.3 + 0.7 * (self.hunger / 100.0)
+        hunger_ratio = max(0.0, min(1.0, self.hunger / 100.0))
+        value = 0.3 + 0.7 * hunger_ratio
         
         # Convert HSV to RGB
         rgb = colorsys.hsv_to_rgb(self.hue / 360.0, saturation, value)
-        return tuple(int(255 * x) for x in rgb)
+        return tuple(max(0, min(255, int(255 * x))) for x in rgb)
     
     def rest(self):
         """Restore energy and some HP."""
@@ -509,6 +596,17 @@ class Creature:
             hunger_depletion *= 1.4  # 40% faster hunger depletion
         if self.has_trait("Indiscriminate Eater"):
             hunger_depletion *= 1.3  # 30% faster hunger depletion (eats anything but burns more)
+        
+        # Apply Metabolism skill - improves energy efficiency
+        metabolism_skill = self.skills.get_skill(SkillType.METABOLISM)
+        # Efficiency multiplier: 1.0 (Novice) to 2.0 (Legendary)
+        efficiency = metabolism_skill.get_performance_modifier()
+        hunger_depletion /= efficiency
+        
+        # Gain Metabolism XP for surviving (slow trickle)
+        # 1% chance per tick to gain XP
+        if random.random() < 0.01:
+            metabolism_skill.use(difficulty=1.0, success=True)
         
         # Deplete hunger (preserve float precision)
         self.hunger = max(0, self.hunger - hunger_depletion)
@@ -632,6 +730,113 @@ class Creature:
         
         return True
     
+    # ===== Hazard Memory Methods (Smart Trait System) =====
+    
+    def remember_hazard(self, position: Vector2D, hazard_type: str, learning_method: str, confidence: float = 1.0):
+        """
+        Remember a dangerous location.
+        
+        Args:
+            position: Location of the hazard
+            hazard_type: Type of hazard
+            learning_method: How this was learned ('direct', 'death_observation', 'avoidance_observation')
+            confidence: Confidence level (0.0-1.0)
+        """
+        # Check if we already have a memory of this location
+        for memory in self.hazard_memories:
+            if memory.position.distance_to(position) < 5.0:  # Within 5 units
+                # Update existing memory
+                memory.danger_level = min(1.0, memory.danger_level + 0.2)
+                memory.confidence = max(memory.confidence, confidence)
+                return
+        
+        # Check capacity based on traits
+        max_capacity = self.get_max_hazard_memories()
+        if len(self.hazard_memories) >= max_capacity:
+            # Remove oldest/weakest memory
+            self.hazard_memories.sort(key=lambda m: m.danger_level * m.confidence)
+            self.hazard_memories.pop(0)
+        
+        # Add new memory
+        import time
+        self.hazard_memories.append(HazardMemory(
+            position=position,
+            hazard_type=hazard_type,
+            danger_level=1.0,
+            learned_from=learning_method,
+            witnessed_at=time.time(),
+            confidence=confidence
+        ))
+    
+    def is_avoiding_area(self, position: Vector2D, radius: float = 5.0) -> bool:
+        """
+        Check if creature considers an area dangerous.
+        
+        Args:
+            position: Position to check
+            radius: Radius around position to check
+            
+        Returns:
+            True if creature has hazard memories near this position
+        """
+        for memory in self.hazard_memories:
+            if memory.position.distance_to(position) < radius:
+                # Consider dangerous if danger level and confidence are both significant
+                if memory.danger_level * memory.confidence > 0.3:
+                    return True
+        return False
+    
+    def decay_hazard_memories(self, delta_time: float):
+        """
+        Fade hazard memories over time.
+        
+        Args:
+            delta_time: Time elapsed since last update
+        """
+        # Decay rate depends on traits
+        decay_rate = 0.01  # Base decay per second
+        
+        # Intelligent creatures retain memories longer
+        if self.has_trait("Intelligent"):
+            decay_rate *= 0.5  # Half decay rate (2x retention)
+        
+        # Decay all memories
+        memories_to_remove = []
+        for memory in self.hazard_memories:
+            memory.danger_level -= decay_rate * delta_time
+            memory.confidence -= decay_rate * delta_time * 0.5  # Confidence decays slower
+            
+            # Remove if completely faded
+            if memory.danger_level <= 0 or memory.confidence <= 0:
+                memories_to_remove.append(memory)
+        
+        for memory in memories_to_remove:
+            self.hazard_memories.remove(memory)
+    
+    def get_max_hazard_memories(self) -> int:
+        """
+        Get maximum number of hazard memories based on traits.
+        
+        Returns:
+            Maximum capacity for hazard memories
+        """
+        base_capacity = 3  # Normal creatures remember 3 hazards
+        
+        # Intelligent creatures have much better memory
+        if self.has_trait("Intelligent"):
+            return 10
+        
+        return base_capacity
+    
+    def get_dangerous_areas(self) -> List[tuple]:
+        """
+        Get list of dangerous areas this creature remembers.
+        
+        Returns:
+            List of (position, danger_level) tuples
+        """
+        return [(m.position, m.danger_level * m.confidence) for m in self.hazard_memories]
+    
     def to_dict(self) -> Dict:
         """
         Serialize creature to dictionary for persistence.
@@ -673,7 +878,8 @@ class Creature:
             'social_traits': self.social_traits.to_dict(),
             'injury_tracker': self.injury_tracker.to_dict(),
             'interaction_tracker': self.interaction_tracker.to_dict(),
-            'combat_memory': self.combat_memory.to_dict()
+            'combat_memory': self.combat_memory.to_dict(),
+            'skills': self.skills.to_dict()
         }
     
     @staticmethod
@@ -736,8 +942,61 @@ class Creature:
         # Restore combat memory if present
         if 'combat_memory' in data:
             creature.combat_memory = CombatMemory.from_dict(data['combat_memory'])
+            
+        # Restore skills if present
+        if 'skills' in data:
+            creature.skills.from_dict(data['skills'])
         
         return creature
+    
+    def record_social_interaction(self, other_creature_id: str, interaction_type: str = 'neutral', damage: float = 0.0):
+        """
+        Record a social interaction with another creature for neural learning.
+        
+        Args:
+            other_creature_id: ID of the other creature
+            interaction_type: 'cooperation', 'conflict', or 'neutral'
+            damage: Damage dealt or received (if any)
+        """
+        # Get or create social memory for this creature
+        if other_creature_id not in self.social_memory:
+            self.social_memory[other_creature_id] = SocialMemory(creature_id=other_creature_id)
+        
+        memory = self.social_memory[other_creature_id]
+        memory.interaction_count += 1
+        memory.last_interaction_time = time.time()
+        
+        if interaction_type == 'cooperation':
+            memory.cooperation_count += 1
+        elif interaction_type == 'conflict':
+            memory.conflict_count += 1
+            if damage > 0:
+                memory.total_damage_received += damage
+    
+    def record_damage_to_creature(self, other_creature_id: str, damage: float):
+        """
+        Record damage dealt to another creature.
+        
+        Args:
+            other_creature_id: ID of the creature damaged
+            damage: Amount of damage dealt
+        """
+        if other_creature_id not in self.social_memory:
+            self.social_memory[other_creature_id] = SocialMemory(creature_id=other_creature_id)
+        
+        self.social_memory[other_creature_id].total_damage_dealt += damage
+    
+    def get_social_memory(self, other_creature_id: str) -> Optional[SocialMemory]:
+        """
+        Get social memory for another creature.
+        
+        Args:
+            other_creature_id: ID of the other creature
+            
+        Returns:
+            SocialMemory if exists, None otherwise
+        """
+        return self.social_memory.get(other_creature_id)
     
     def __repr__(self):
         """String representation of Creature."""

@@ -12,6 +12,7 @@ from ..models.creature import Creature
 from ..models.history import EventType
 from ..models.skills import SkillType
 from ..models.relationships import RelationshipType
+from ..models.attention import StimulusType
 from ..utils.preferences import get_preferences
 
 
@@ -316,22 +317,24 @@ class CreatureInspector:
         
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mouse_pos = pygame.mouse.get_pos()
-            if self.title_bar_rect.collidepoint(mouse_pos):
-                self.dragging = True
-                self.drag_offset = (mouse_pos[0] - panel_x, mouse_pos[1] - panel_y)
-                self.auto_hide_timer = 0.0
-                return True
             
-            # Check pin button click
+            # Check pin button click FIRST (before title bar, since it's inside the title bar)
             pin_button_rect = pygame.Rect(panel_x + panel_width - 60, panel_y + 5, 25, 25)
             if pin_button_rect.collidepoint(mouse_pos):
                 self.toggle_pin()
                 return True
             
-            # Check close button click
+            # Check close button click FIRST (before title bar, since it's inside the title bar)
             close_button_rect = pygame.Rect(panel_x + panel_width - 30, panel_y + 5, 25, 25)
             if close_button_rect.collidepoint(mouse_pos):
                 self.hide()
+                return True
+            
+            # Check title bar for dragging (only if buttons weren't clicked)
+            if self.title_bar_rect.collidepoint(mouse_pos):
+                self.dragging = True
+                self.drag_offset = (mouse_pos[0] - panel_x, mouse_pos[1] - panel_y)
+                self.auto_hide_timer = 0.0
                 return True
         
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
@@ -403,7 +406,17 @@ class CreatureInspector:
         if not self.selected_creature:
             return
         
-        creature = self.selected_creature
+        # Handle both Creature and BattleCreature objects
+        # If it's a BattleCreature, extract the Creature for display
+        battle_creature = None
+        if hasattr(self.selected_creature, 'creature'):
+            # It's a BattleCreature wrapper
+            battle_creature = self.selected_creature
+            creature = self.selected_creature.creature
+        else:
+            # It's a plain Creature
+            creature = self.selected_creature
+        
         screen_width, screen_height = screen.get_size()
         
         # Calculate panel dimensions
@@ -443,16 +456,59 @@ class CreatureInspector:
         
         # Pin button (use loaded icon if available)
         pin_x = panel_width - 60
+        pin_y = 5
+        pin_size = 25
         pin_color = self.success_color if self.is_pinned else (150, 150, 150)
         pin_key = 'pin' if self.is_pinned else 'circle'
-        self._render_symbol(panel, pin_key, pin_x, 5, self.text_font, (*pin_color, int(255 * self.alpha / 255)))
         
-        # Close button
+        # Check if mouse is hovering over pin button
+        mouse_pos = pygame.mouse.get_pos()
+        pin_button_rect = pygame.Rect(panel_x + pin_x, panel_y + pin_y, pin_size, pin_size)
+        pin_hovered = pin_button_rect.collidepoint(mouse_pos) if self.visible else False
+        
+        # Draw pin button background with hover effect
+        pin_bg_alpha = 150 if pin_hovered else 100
+        pin_bg_color = (*pin_color, int(pin_bg_alpha * self.alpha / 255))
+        pygame.draw.circle(panel, pin_bg_color, (pin_x + pin_size // 2, pin_y + pin_size // 2), pin_size // 2)
+        if pin_hovered:
+            # Draw border on hover
+            pygame.draw.circle(panel, (*pin_color, int(255 * self.alpha / 255)), 
+                             (pin_x + pin_size // 2, pin_y + pin_size // 2), pin_size // 2, 2)
+        self._render_symbol(panel, pin_key, pin_x + 3, pin_y + 3, self.text_font, (*pin_color, int(255 * self.alpha / 255)))
+        
+        # Close button with enhanced visuals
         close_x = panel_width - 30
-        self._render_symbol(panel, 'close', close_x, 5, self.text_font, (*self.warning_color, int(255 * self.alpha / 255)))
+        close_y = 5
+        close_size = 25
+        
+        # Check if mouse is hovering over close button
+        close_button_rect = pygame.Rect(panel_x + close_x, panel_y + close_y, close_size, close_size)
+        close_hovered = close_button_rect.collidepoint(mouse_pos) if self.visible else False
+        
+        # Draw close button background with hover effect
+        close_bg_alpha = 180 if close_hovered else 120
+        close_bg_color = (*self.warning_color, int(close_bg_alpha * self.alpha / 255))
+        pygame.draw.circle(panel, close_bg_color, (close_x + close_size // 2, close_y + close_size // 2), close_size // 2)
+        if close_hovered:
+            # Draw brighter border on hover
+            pygame.draw.circle(panel, (255, 200, 200, int(255 * self.alpha / 255)), 
+                             (close_x + close_size // 2, close_y + close_size // 2), close_size // 2, 2)
+        
+        # Draw X symbol
+        x_color = (255, 255, 255, int(255 * self.alpha / 255))
+        x_offset = 7
+        x_size = 11
+        # Top-left to bottom-right
+        pygame.draw.line(panel, x_color, 
+                        (close_x + x_offset, close_y + x_offset),
+                        (close_x + x_offset + x_size, close_y + x_offset + x_size), 2)
+        # Top-right to bottom-left
+        pygame.draw.line(panel, x_color,
+                        (close_x + x_offset + x_size, close_y + x_offset),
+                        (close_x + x_offset, close_y + x_offset + x_size), 2)
         
         # Render content with scrolling
-        content_surface = self._render_content(creature, panel_width)
+        content_surface = self._render_content(creature, panel_width, battle_creature)
         
         # Calculate max scroll
         self.max_scroll = max(0, content_surface.get_height() - panel_height + title_bar_height + 10)
@@ -461,8 +517,15 @@ class CreatureInspector:
         content_y = title_bar_height
         content_height = panel_height - title_bar_height
         
+        # Set clipping rect to prevent content from drawing outside the content area
+        clip_rect = pygame.Rect(0, content_y, panel_width, content_height)
+        panel.set_clip(clip_rect)
+        
         # Blit scrolled content
         panel.blit(content_surface, (0, content_y - self.scroll_offset))
+        
+        # Clear clipping rect
+        panel.set_clip(None)
         
         # Draw scroll indicators if needed
         if self.max_scroll > 0:
@@ -500,13 +563,14 @@ class CreatureInspector:
             )
             screen.blit(hint_text, (panel_x + 10, hint_y + i * 18))
     
-    def _render_content(self, creature: Creature, panel_width: int) -> pygame.Surface:
+    def _render_content(self, creature: Creature, panel_width: int, battle_creature=None) -> pygame.Surface:
         """
         Render all content for the inspector panel.
         
         Args:
             creature: The creature to display
             panel_width: Width of the panel
+            battle_creature: Optional BattleCreature wrapper for accessing attention system
             
         Returns:
             Surface with all content rendered
@@ -532,6 +596,37 @@ class CreatureInspector:
         content.blit(subtitle, (x_margin, y))
         y += subtitle.get_height() + self.section_spacing
         
+        # === Current Focus ===
+        # Get attention system from battle_creature if available
+        attention = None
+        if battle_creature and hasattr(battle_creature, 'attention'):
+            attention = battle_creature.attention
+        elif hasattr(creature, 'attention'):
+            attention = creature.attention
+        
+        if attention and hasattr(attention, 'current_focus'):
+            current_focus = attention.current_focus
+            focus_text = f"Focus: {current_focus.value.upper()}"
+            
+            # Color code the focus
+            focus_color = self.text_color
+            if current_focus == StimulusType.COMBAT:
+                focus_color = (255, 100, 100) # Red
+            elif current_focus == StimulusType.FORAGING:
+                focus_color = (100, 255, 100) # Green
+            elif current_focus == StimulusType.FLEEING:
+                focus_color = (255, 200, 50) # Orange
+            elif current_focus == StimulusType.HAZARD_AVOIDANCE:
+                focus_color = (255, 150, 50) # Orange-red
+            elif current_focus == StimulusType.SOCIAL:
+                focus_color = (255, 100, 255) # Pink
+            elif current_focus == StimulusType.EXPLORING:
+                focus_color = (100, 200, 255) # Blue
+                
+            focus_surf = self.text_font.render(focus_text, True, focus_color)
+            content.blit(focus_surf, (x_margin, y))
+            y += focus_surf.get_height() + self.section_spacing
+        
         # === Stats Section ===
         y = self._render_section_header(content, "Stats", x_margin, y)
         
@@ -555,6 +650,37 @@ class CreatureInspector:
         # === Health & Injuries Section ===
         y = self._render_section_header(content, "Health & Injuries", x_margin, y)
         
+        # === Disease Status ===
+        if hasattr(creature, 'active_infection') and creature.active_infection:
+            infection = creature.active_infection
+            disease = infection.disease
+            
+            # Disease Name
+            name_text = self.text_font.render(f"⚠ Infected: {disease.name}", True, (255, 100, 100))
+            content.blit(name_text, (x_margin + 10, y))
+            y += self.line_height
+            
+            # Stage
+            stage_text = self.small_font.render(f"Stage: {infection.stage.name}", True, (255, 150, 150))
+            content.blit(stage_text, (x_margin + 20, y))
+            y += self.line_height
+            
+            # Effects
+            if infection.stage.name == 'SYMPTOMATIC':
+                effects = []
+                if disease.hp_drain_rate > 0:
+                    effects.append(f"HP Drain: -{disease.hp_drain_rate}/s")
+                if disease.stat_penalty > 0:
+                    effects.append(f"Stats: -{int(disease.stat_penalty * 100)}%")
+                    
+                if effects:
+                    effect_str = ", ".join(effects)
+                    effect_text = self.small_font.render(effect_str, True, (255, 100, 100))
+                    content.blit(effect_text, (x_margin + 20, y))
+                    y += self.line_height
+            
+            y += 5  # Spacing
+            
         tracker = creature.injury_tracker
         
         # Overall injury statistics

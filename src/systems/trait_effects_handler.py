@@ -505,3 +505,39 @@ class TraitEffectsHandler:
                     modifier *= effects.get('day_penalty', 1.0)
         
         return modifier
+    
+    def get_building_bonus(
+        self,
+        creature: 'Creature',
+        stat_type: str = 'speed'
+    ) -> float:
+        """
+        Calculate bonus for building related activities.
+        
+        Args:
+            creature: The creature
+            stat_type: 'speed', 'durability', 'carry_capacity'
+            
+        Returns:
+            Multiplier (1.0 = normal)
+        """
+        modifier = 1.0
+        
+        for trait in creature.traits:
+            effects = trait.interaction_effects
+            
+            if stat_type == 'speed':
+                if effects.get('build_speed_multiplier'):
+                    modifier *= effects['build_speed_multiplier']
+                if effects.get('construction_speed_bonus'):
+                    modifier *= (1.0 + effects['construction_speed_bonus'])
+                    
+            elif stat_type == 'durability':
+                if effects.get('structure_durability_bonus'):
+                    modifier *= effects['structure_durability_bonus']
+                    
+            elif stat_type == 'carry_capacity':
+                if effects.get('carry_capacity_multiplier'):
+                    modifier *= effects['carry_capacity_multiplier']
+                    
+        return modifier

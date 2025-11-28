@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+backup - read only do not edit/
 build/
 develop-eggs/
 dist/

@@ -200,9 +200,17 @@ class PelletInspector:
         # Calculate max scroll
         self.max_scroll = max(0, content_surface.get_height() - panel_height + title_bar_height + 10)
         
-        # Blit scrolled content
+        # Set clipping rect to prevent content from drawing outside the content area
         content_y = title_bar_height
+        content_height = panel_height - title_bar_height
+        clip_rect = pygame.Rect(0, content_y, panel_width, content_height)
+        panel.set_clip(clip_rect)
+        
+        # Blit scrolled content
         panel.blit(content_surface, (0, content_y - self.scroll_offset))
+        
+        # Clear clipping rect
+        panel.set_clip(None)
         
         # Draw scroll indicators
         if self.max_scroll > 0:

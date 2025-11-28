@@ -380,6 +380,229 @@ INDISCRIMINATE_EATER = Trait(
 
 
 # ===========================
+# LEARNING & COGNITIVE TRAITS
+# ===========================
+
+QUICK_LEARNER = Trait(
+    name="Quick Learner",
+    description="Learns from observation 50% faster, forms beliefs more quickly",
+    trait_type="cognitive",
+    rarity="uncommon",
+    interaction_effects={
+        'learning_rate_multiplier': 1.5,
+        'observation_range_multiplier': 1.2,
+        # Negative trade-off: overconfidence in beliefs
+        'belief_overconfidence_risk': 1.2
+    }
+)
+
+MIMIC = Trait(
+    name="Mimic",
+    description="Can copy behaviors of nearby creatures, excellent observer",
+    trait_type="cognitive",
+    speed_modifier=1.05,
+    rarity="rare",
+    interaction_effects={
+        'observation_range_multiplier': 2.0,
+        'learning_rate_multiplier': 1.3,
+        'imitation_success_rate': 1.5,
+        # Negative trade-off: lacks original thinking
+        'innovation_penalty': 0.7
+    }
+)
+
+STUBBORN = Trait(
+    name="Stubborn",
+    description="Resistant to learning new behaviors, but retains knowledge longer",
+    trait_type="cognitive",
+    defense_modifier=1.05,  # Set in their ways
+    rarity="common",
+    interaction_effects={
+        'learning_rate_multiplier': 0.5,
+        'memory_capacity_multiplier': 1.5,
+        'belief_decay_resistance': 0.5,  # Beliefs last longer
+        # Negative trade-off: slow to adapt to changes
+        'adaptation_speed_penalty': 0.6
+    }
+)
+
+INNOVATIVE = Trait(
+    name="Innovative",
+    description="Occasionally develops unique behaviors, creative problem solver",
+    trait_type="cognitive",
+    rarity="rare",
+    interaction_effects={
+        'mutation_chance_bonus': 0.25,
+        'unique_behavior_chance': 0.15,
+        'problem_solving_bonus': 1.3,
+        # Negative trade-off: unpredictable, sometimes tries risky things
+        'risk_taking_multiplier': 1.3
+    }
+)
+
+FORGETFUL = Trait(
+    name="Forgetful",
+    description="Poor memory, beliefs decay faster but learns quickly in the moment",
+    trait_type="cognitive",
+    rarity="common",
+    interaction_effects={
+        'memory_capacity_multiplier': 0.7,
+        'belief_decay_multiplier': 2.0,  # Forgets faster
+        'short_term_learning_bonus': 1.2,
+        # Negative trade-off: repeats mistakes
+        'mistake_repetition_chance': 1.4
+    }
+)
+
+WISE = Trait(
+    name="Wise",
+    description="Excellent memory and judgment, makes better decisions",
+    trait_type="cognitive",
+    defense_modifier=1.1,
+    rarity="rare",
+    interaction_effects={
+        'memory_capacity_multiplier': 1.8,
+        'decision_quality_bonus': 1.3,
+        'belief_accuracy_bonus': 1.2,
+        # Negative trade-off: slower to form new beliefs (cautious)
+        'belief_formation_speed': 0.8
+    }
+)
+
+INSTINCTIVE = Trait(
+    name="Instinctive",
+    description="Relies on instinct over learning, strong innate behaviors",
+    trait_type="cognitive",
+    strength_modifier=1.1,
+    rarity="uncommon",
+    interaction_effects={
+        'innate_behavior_strength': 1.5,
+        'learning_rate_multiplier': 0.7,
+        'reflex_bonus': 1.3,
+        # Negative trade-off: rigid, can't adapt well to new situations
+        'behavioral_flexibility_penalty': 0.7
+    }
+)
+
+INTELLIGENT = Trait(
+    name="Intelligent",
+    description="Enhanced cognitive abilities - faster thinking, better memory, learns from observation",
+    trait_type="cognitive",
+    rarity="rare",  # 5% spawn rate - rare but valuable
+    interaction_effects={
+        # AI Performance
+        'ai_update_frequency': 1,  # Update every frame instead of every 4
+        
+        # Memory Capacity
+        'max_combat_memories': 20,  # vs 5 for normal creatures
+        'max_learned_behaviors': 10,  # vs 3 for normal creatures
+        'memory_retention_multiplier': 2.0,  # Memories last 2x longer
+        'hazard_memory_capacity': 10,  # vs 3 for normal creatures
+        
+        # Learning Abilities
+        'observational_learning': True,  # Can learn from watching others
+        'learning_rate_multiplier': 1.3,
+        'observation_range_multiplier': 1.5,
+        
+        # Decision Making
+        'decision_quality_bonus': 1.2,
+        'tactical_awareness_bonus': 1.3,
+        
+        # Negative trade-off: Big brain needs more energy
+        'hunger_depletion_multiplier': 1.4,  # 40% faster hunger
+        'energy_cost_per_thought': 0.1  # Additional energy cost for frequent AI updates
+    }
+)
+
+
+# ===========================
+# BUILDING TRAITS
+# ===========================
+
+ARCHITECT = Trait(
+    name="Architect",
+    description="Builds structures 50% faster with +25% durability",
+    trait_type="building",
+    rarity="uncommon",
+    interaction_effects={
+        'build_speed_multiplier': 1.5,
+        'structure_durability_bonus': 1.25,
+        # Negative trade-off: slower at other tasks
+        'non_building_task_speed': 0.9
+    }
+)
+
+MATERIAL_GATHERER = Trait(
+    name="Material Gatherer",
+    description="Carries 2x materials, +30% material detection range",
+    trait_type="building",
+    rarity="common",
+    interaction_effects={
+        'carry_capacity_multiplier': 2.0,
+        'material_detection_range': 1.3,
+        # Negative trade-off: slower movement when carrying
+        'movement_speed_when_carrying': 0.85
+    }
+)
+
+COOPERATIVE_BUILDER = Trait(
+    name="Cooperative Builder",
+    description="Can work with others on structures, +40% build speed when cooperating",
+    trait_type="building",
+    rarity="uncommon",
+    interaction_effects={
+        'cooperative_building': True,
+        'cooperative_speed_bonus': 1.4,
+        'social_bond_strength': 1.2,
+        # Negative trade-off: less effective when building alone
+        'solo_building_penalty': 0.8
+    }
+)
+
+INNOVATOR = Trait(
+    name="Innovator",
+    description="Can combine structure types, 20% chance to discover new patterns",
+    trait_type="building",
+    rarity="rare",
+    interaction_effects={
+        'structure_combination': True,
+        'innovation_chance': 0.2,
+        'blueprint_discovery_rate': 1.5,
+        # Negative trade-off: experimental builds sometimes fail
+        'construction_failure_chance': 0.1
+    }
+)
+
+DEMOLISHER = Trait(
+    name="Demolisher",
+    description="Can deconstruct structures for materials, +50% salvage rate",
+    trait_type="building",
+    rarity="uncommon",
+    interaction_effects={
+        'can_deconstruct': True,
+        'salvage_rate_multiplier': 1.5,
+        'demolition_speed': 1.3,
+        # Negative trade-off: accidentally damages structures when near them
+        'accidental_damage_chance': 0.05
+    }
+)
+
+PLANNER = Trait(
+    name="Planner",
+    description="Visualizes structure before building, reduces material waste by 25%",
+    trait_type="building",
+    rarity="uncommon",
+    interaction_effects={
+        'structure_preview': True,
+        'material_efficiency': 1.25,
+        'planning_accuracy': 1.4,
+        # Negative trade-off: slower to start building (planning phase)
+        'build_start_delay': 1.3
+    }
+)
+
+
+# ===========================
 # TRAIT COLLECTIONS
 # ===========================
 
@@ -424,12 +647,34 @@ DIETARY_TRAITS = [
     INDISCRIMINATE_EATER
 ]
 
+LEARNING_TRAITS = [
+    QUICK_LEARNER,
+    MIMIC,
+    STUBBORN,
+    INNOVATIVE,
+    FORGETFUL,
+    WISE,
+    INSTINCTIVE,
+    INTELLIGENT
+]
+
+BUILDING_TRAITS = [
+    ARCHITECT,
+    MATERIAL_GATHERER,
+    COOPERATIVE_BUILDER,
+    INNOVATOR,
+    DEMOLISHER,
+    PLANNER
+]
+
 ALL_ECOSYSTEM_TRAITS = (
     METABOLIC_TRAITS +
     BEHAVIORAL_TRAITS +
     PERSONALITY_TRAITS +
     SURVIVAL_TRAITS +
-    DIETARY_TRAITS
+    DIETARY_TRAITS +
+    LEARNING_TRAITS +
+    BUILDING_TRAITS
 )
 
 
@@ -473,3 +718,9 @@ def get_random_dietary_trait():
     """Get a random dietary trait."""
     import random
     return random.choice(DIETARY_TRAITS)
+
+
+def get_random_learning_trait():
+    """Get a random learning/cognitive trait."""
+    import random
+    return random.choice(LEARNING_TRAITS)

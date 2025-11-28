@@ -30,7 +30,8 @@ class ArenaRenderer:
         hazard_color: tuple = (200, 50, 50),
         resource_color: tuple = (50, 200, 100),
         show_grid: bool = False,
-        pellet_renderer = None
+        pellet_renderer = None,
+        building_renderer = None
     ):
         """
         Initialize the arena renderer.
@@ -42,6 +43,7 @@ class ArenaRenderer:
             resource_color: RGB color for resources (for simple Vector2D resources)
             show_grid: Whether to display the grid (default False for performance)
             pellet_renderer: Optional PelletRenderer for detailed pellet rendering
+            building_renderer: Optional BuildingRenderer for building/structure rendering
         """
         self.grid_color = grid_color
         self.border_color = border_color
@@ -49,6 +51,7 @@ class ArenaRenderer:
         self.resource_color = resource_color
         self.show_grid = show_grid
         self.pellet_renderer = pellet_renderer
+        self.building_renderer = building_renderer
         
         # Background colors
         self.bg_color = (30, 30, 40)
@@ -67,6 +70,9 @@ class ArenaRenderer:
         self.terrain_images = {}
         self.weather_images = {}
         self._load_assets()
+        
+        # Weather animation state
+        self.weather_offset = 0.0
         
     def _load_assets(self):
         """Load terrain and weather assets."""
@@ -110,359 +116,352 @@ class ArenaRenderer:
                     self.weather_images[weather_type] = img
             except Exception as e:
                 print(f"Failed to load weather image {filename}: {e}")
-    
-    def render(self, screen: pygame.Surface, battle: SpatialBattle):
+
+
+    def render(
+        self,
+        screen: pygame.Surface,
+        battle: SpatialBattle,
+        camera=None,
+        selected_creature_id: str = None,
+        hovered_creature_id: str = None,
+        show_debug: bool = False
+    ):
         """
-        Render the arena.
+        Render the arena and all its contents.
         
         Args:
             screen: Pygame surface to draw on
-            battle: The spatial battle containing arena data
+            battle: Battle state
+            camera: Camera instance for view transformation
+            selected_creature_id: ID of currently selected creature
+            hovered_creature_id: ID of currently hovered creature
+            show_debug: Whether to show debug visuals
         """
-        # Get arena bounds on screen
-        bounds = self._get_arena_bounds(screen)
-        x, y, width, height = bounds
+        # If no camera provided, create a dummy one (fallback)
+        if camera is None:
+            return
+            
+        # 1. Draw Background / Terrain
+        self._render_terrain(screen, battle, camera)
         
-        # Draw background with team side tints
-        mid_x = x + width // 2
+        # 2. Draw Grid (optional)
+        if self.show_grid:
+            self._render_grid(screen, battle.arena.width, battle.arena.height, camera)
+            
+        # 3. Draw Hazards
+        if battle.environment and battle.environment.hazards:
+            for hazard in battle.environment.hazards:
+                self._render_hazard(screen, hazard, camera)
+                
+        # 4. Draw Resources (Pellets)
+        # Use specialized pellet renderer if available
+        if self.pellet_renderer:
+            self.pellet_renderer.render(screen, battle.arena.resources, camera)
+        else:
+            # Fallback rendering
+            for pellet in battle.arena.resources:
+                self._render_resource(screen, pellet, camera)
+    
+        # 5. Draw Creatures
+        # Filter visible creatures first, then sort
+        # This avoids sorting thousands of off-screen creatures
+        screen_w, screen_h = screen.get_size()
+        top_left_world = camera.screen_to_world((0, 0))
+        bottom_right_world = camera.screen_to_world((screen_w, screen_h))
         
-        # Player side (left) - blue tint
-        player_rect = pygame.Rect(x, y, width // 2, height)
-        pygame.draw.rect(screen, self.player_side_tint, player_rect)
+        # Add generous buffer for creatures (radius + UI elements)
+        c_buffer = 50.0
+        min_cx = top_left_world.x - c_buffer
+        max_cx = bottom_right_world.x + c_buffer
+        min_cy = top_left_world.y - c_buffer
+        max_cy = bottom_right_world.y + c_buffer
         
-        # Enemy side (right) - red tint
-        enemy_rect = pygame.Rect(mid_x, y, width // 2, height)
-        pygame.draw.rect(screen, self.enemy_side_tint, enemy_rect)
-        
-        # Draw center line
-        pygame.draw.line(
-            screen,
-            (60, 60, 70),
-            (mid_x, y),
-            (mid_x, y + height),
-            2
+        visible_creatures = []
+        for c in battle.creatures:
+            if not c.is_alive():
+                continue
+            
+            # Simple bounding box check
+            pos = c.spatial.position
+            if min_cx <= pos.x <= max_cx and min_cy <= pos.y <= max_cy:
+                visible_creatures.append(c)
+                
+        # Sort only visible creatures by Y position for proper depth/overlap
+        sorted_creatures = sorted(
+            visible_creatures,
+            key=lambda c: c.spatial.position.y
         )
         
-        # Draw terrain cells if environment exists
-        if hasattr(battle, 'environment') and battle.environment and hasattr(battle.environment, 'terrain_grid'):
-            self._draw_terrain(screen, bounds, battle)
+        for creature in sorted_creatures:
+            is_selected = (creature.creature.creature_id == selected_creature_id)
+            is_hovered = (creature.creature.creature_id == hovered_creature_id)
             
-        # Draw weather effects
-        if hasattr(battle, 'environment') and battle.environment:
-            self._draw_weather_effects(screen, bounds, battle)
+            self._render_creature(
+                screen, 
+                creature, 
+                camera,
+                is_selected, 
+                is_hovered,
+                show_debug
+            )
             
-        # Draw biome boundaries if multi-biome
-        if hasattr(battle, 'environment') and battle.environment and hasattr(battle.environment, 'biome_regions'):
-            self._draw_biome_boundaries(screen, bounds, battle)
-        
-        # Draw grid if enabled
-        if self.show_grid:
-            self._draw_grid(screen, bounds, battle.arena)
-        
-        # Draw arena border
-        pygame.draw.rect(screen, self.border_color, (x, y, width, height), 3)
-        
-        # Draw hazards
-        for hazard_pos in battle.arena.hazards:
-            self._draw_hazard(screen, hazard_pos, bounds, battle.arena)
-        
-        # Draw resources (delegate pellets to pellet_renderer if available)
-        if self.pellet_renderer:
-            # Draw only simple Vector2D resources here
-            for resource in battle.arena.resources:
-                if isinstance(resource, Vector2D):
-                    self._draw_resource(screen, resource, bounds, battle.arena)
-            # Pellets will be rendered by pellet_renderer separately
-        else:
-            # No pellet renderer, draw all resources simply
-            for resource_pos in battle.arena.resources:
-                self._draw_resource(screen, resource_pos, bounds, battle.arena)
-    
-    def _get_arena_bounds(self, screen: pygame.Surface) -> tuple:
-        """
-        Get the screen bounds for the arena.
-        
-        Arena is positioned in the center with margins for UI panels:
-        - Left: GENETIC STRAINS panel (250px)
-        - Right: CREATURES + PELLET ECOSYSTEM panels (250px)
-        - Top: Header/title (80px)
-        - Bottom: Battle Feed (200px)
-        """
-        screen_width = screen.get_width()
-        screen_height = screen.get_height()
-        
-        # Left margin for GENETIC STRAINS panel
-        ui_margin_left = 250
-        # Right margin for CREATURES and PELLET ECOSYSTEM panels
-        ui_margin_right = 250
-        # Top margin for header/title
-        ui_margin_top = 80
-        # Bottom margin for Battle Feed
-        ui_margin_bottom = 200
-        
-        x = ui_margin_left
-        y = ui_margin_top
-        width = screen_width - ui_margin_left - ui_margin_right
-        height = screen_height - ui_margin_top - ui_margin_bottom
-        
-        return (x, y, width, height)
-    
-    def world_to_screen(
-        self,
-        world_pos: Vector2D,
-        screen: pygame.Surface,
-        arena
-    ) -> tuple:
-        """
-        Convert world coordinates to screen coordinates.
-        
-        Args:
-            world_pos: World position to convert
-            screen: Pygame surface for bounds calculation
-            arena: Arena object for world dimensions
+        # 6. Draw Weather Overlay
+        if battle.environment and battle.environment.weather:
+            self._render_weather(screen, battle.environment.weather, camera)
             
-        Returns:
-            Tuple of (screen_x, screen_y)
-        """
-        bounds = self._get_arena_bounds(screen)
-        return self._world_to_screen(world_pos, bounds, arena)
-    
-    def _draw_grid(self, screen: pygame.Surface, bounds: tuple, arena):
-        """Draw grid lines on the arena using cached surface when possible."""
-        x, y, width, height = bounds
+        # 7. Draw Arena Border
+        self._render_border(screen, battle.arena.width, battle.arena.height, camera)
         
-        # Check if we need to regenerate the grid cache
-        if (self._cached_grid_surface is None or 
-            self._cached_grid_bounds != bounds or
-            self._cached_grid_surface.get_size() != (width, height)):
-            # Create cached grid surface
-            self._cached_grid_surface = pygame.Surface((width, height), pygame.SRCALPHA)
-            self._cached_grid_bounds = bounds
-            
-            # Draw vertical lines (every 10 units)
-            grid_spacing_world = 10.0
-            num_vertical_lines = int(arena.width / grid_spacing_world)
-            
-            for i in range(1, num_vertical_lines):
-                world_x = i * grid_spacing_world
-                screen_x = int((world_x / arena.width) * width)
-                pygame.draw.line(
-                    self._cached_grid_surface,
-                    self.grid_color,
-                    (screen_x, 0),
-                    (screen_x, height),
-                    1
-                )
-            
-            # Draw horizontal lines
-            num_horizontal_lines = int(arena.height / grid_spacing_world)
-            
-            for i in range(1, num_horizontal_lines):
-                world_y = i * grid_spacing_world
-                screen_y = int((world_y / arena.height) * height)
-                pygame.draw.line(
-                    self._cached_grid_surface,
-                    self.grid_color,
-                    (0, screen_y),
-                    (width, screen_y),
-                    1
-                )
-        
-        # Blit the cached grid surface
-        screen.blit(self._cached_grid_surface, (x, y))
-    
-    def _draw_terrain(self, screen: pygame.Surface, bounds: tuple, battle):
-        """
-        Draw terrain cells with color-coding for different terrain types.
-        
-        Args:
-            screen: Pygame surface to draw on
-            bounds: Arena bounds (x, y, width, height)
-            battle: Battle object with environment
-        """
-        if not battle.environment or not hasattr(battle.environment, 'terrain_grid'):
-            return
-        
-        x, y, width, height = bounds
-        env = battle.environment
-        
-        # Check if we need to regenerate the terrain cache
-        if (self._cached_terrain_surface is None or 
-            self._cached_terrain_bounds != bounds or
-            self._cached_terrain_surface.get_size() != (width, height)):
-            
-            # Create cached terrain surface
-            self._cached_terrain_surface = pygame.Surface((width, height), pygame.SRCALPHA)
-            self._cached_terrain_bounds = bounds
-            
-            cell_size = env.cell_size
-            
-            # Terrain type colors (fallback)
-            terrain_colors = {
-                'grass': (80, 150, 80, 80),      # Green
-                'desert': (210, 180, 140, 80),   # Tan
-                'forest': (40, 100, 40, 100),    # Dark green
-                'marsh': (100, 80, 60, 90),      # Brown
-                'rocky': (120, 120, 130, 90),    # Gray
-                'water': (60, 100, 180, 100),    # Blue
-            }
-            
-            # Draw each terrain cell
-            for (col, row), cell in env.terrain_grid.items():
-                terrain_type = cell.terrain_type.value
+        # 8. Draw Structures & Materials
+        if self.building_renderer:
+            if hasattr(battle, 'structures'):
+                self.building_renderer.render_buildings(screen, battle.buildings, battle.arena, camera)
                 
-                # Calculate position on the cached surface (0,0 is top-left of arena)
-                # We map world coordinates (0 to env.width) to surface coordinates (0 to width)
-                surf_x = (col * cell_size / env.width) * width
-                surf_y = (row * cell_size / env.height) * height
-                cell_w = (cell_size / env.width) * width
-                cell_h = (cell_size / env.height) * height
-                
-                # Ensure dimensions are at least 1 pixel to avoid gaps
-                cell_w = max(1, cell_w + 1)
-                cell_h = max(1, cell_h + 1)
-                
-                rect = (int(surf_x), int(surf_y), int(cell_w), int(cell_h))
-                
-                # Try to draw image
-                if terrain_type in self.terrain_images:
-                    img = self.terrain_images[terrain_type]
-                    # Scale image to cell size
-                    scaled_img = pygame.transform.scale(img, (int(cell_w), int(cell_h)))
-                    self._cached_terrain_surface.blit(scaled_img, (int(surf_x), int(surf_y)))
-                else:
-                    # Fallback to color
-                    color = terrain_colors.get(terrain_type, (100, 100, 100, 80))
-                    pygame.draw.rect(self._cached_terrain_surface, color, rect)
-        
-        # Blit the cached terrain surface
-        screen.blit(self._cached_terrain_surface, (x, y))
+            if hasattr(battle, 'materials'):
+                self.building_renderer.render_materials(screen, battle.materials, battle.arena, camera)
 
-    def _draw_weather_effects(self, screen: pygame.Surface, bounds: tuple, battle):
-        """
-        Draw weather effects overlay.
+    def _render_terrain(self, screen: pygame.Surface, battle: SpatialBattle, camera):
+        """Render the terrain background."""
+        # Fill background
+        screen.fill(self.bg_color)
         
-        Args:
-            screen: Pygame surface
-            bounds: Arena bounds
-            battle: Battle object
-        """
-        if not battle.environment or not battle.environment.weather:
+        # If we have a biome map, render it
+        if hasattr(battle.arena, 'biome_map') and battle.arena.biome_map:
+            # This would be optimized to only draw visible tiles
+            # For now, simple implementation
+            pass
+            
+        if not battle.environment or not battle.environment.terrain_grid:
+            # Fallback to simple rect if no terrain grid
+            top_left = camera.world_to_screen(Vector2D(0, 0))
+            bottom_right = camera.world_to_screen(Vector2D(battle.arena.width, battle.arena.height))
+            rect_width = bottom_right[0] - top_left[0]
+            rect_height = bottom_right[1] - top_left[1]
+            pygame.draw.rect(screen, (30, 35, 40), (top_left[0], top_left[1], rect_width, rect_height))
+            return
+
+        # Calculate visible range to optimize rendering
+        # Get world coordinates of screen corners
+        screen_w, screen_h = screen.get_size()
+        top_left_world = camera.screen_to_world((0, 0))
+        bottom_right_world = camera.screen_to_world((screen_w, screen_h))
+        
+        # Add buffer
+        buffer = 20.0
+        min_x = top_left_world.x - buffer
+        max_x = bottom_right_world.x + buffer
+        min_y = top_left_world.y - buffer
+        max_y = bottom_right_world.y + buffer
+        
+        cell_size = battle.environment.cell_size
+        
+        # Render visible cells
+        for (col, row), cell in battle.environment.terrain_grid.items():
+            # Check if cell is within visible range
+            cell_x = cell.position.x
+            cell_y = cell.position.y
+            
+            if not (min_x <= cell_x <= max_x and min_y <= cell_y <= max_y):
+                continue
+                
+            # Calculate screen position and size
+            # Cell position is center, so top-left is offset
+            tl_world = Vector2D(cell_x - cell_size/2, cell_y - cell_size/2)
+            br_world = Vector2D(cell_x + cell_size/2, cell_y + cell_size/2)
+            
+            tl_screen = camera.world_to_screen(tl_world)
+            br_screen = camera.world_to_screen(br_world)
+            
+            width = int(br_screen[0] - tl_screen[0]) + 1 # +1 to avoid gaps
+            height = int(br_screen[1] - tl_screen[1]) + 1
+            
+            if width <= 0 or height <= 0:
+                continue
+                
+            # Draw terrain
+            if cell.terrain_type.value in self.terrain_images: # Use .value for string key
+                 # Try string key first (loaded as strings)
+                img = self.terrain_images[cell.terrain_type.value]
+                scaled_img = pygame.transform.scale(img, (width, height))
+                screen.blit(scaled_img, tl_screen)
+            elif cell.terrain_type in self.terrain_images: # Try enum key
+                img = self.terrain_images[cell.terrain_type]
+                scaled_img = pygame.transform.scale(img, (width, height))
+                screen.blit(scaled_img, tl_screen)
+            else:
+                # Fallback colors
+                from ..models.environment import TerrainType
+                colors = {
+                    TerrainType.GRASS: (34, 139, 34),
+                    TerrainType.ROCKY: (128, 128, 128),
+                    TerrainType.WATER: (65, 105, 225),
+                    TerrainType.FOREST: (0, 100, 0),
+                    TerrainType.DESERT: (210, 180, 140),
+                    TerrainType.MARSH: (47, 79, 79)
+                }
+                color = colors.get(cell.terrain_type, (50, 50, 50))
+                pygame.draw.rect(screen, color, (tl_screen[0], tl_screen[1], width, height))
+
+    def _render_grid(self, screen: pygame.Surface, width: float, height: float, camera):
+        """Render the grid lines."""
+        # Grid spacing in world units
+        grid_spacing = 10.0
+        
+        # Vertical lines
+        for x in range(0, int(width) + 1, int(grid_spacing)):
+            start_pos = camera.world_to_screen(Vector2D(x, 0))
+            end_pos = camera.world_to_screen(Vector2D(x, height))
+            pygame.draw.line(screen, self.grid_color, start_pos, end_pos, 1)
+            
+        # Horizontal lines
+        for y in range(0, int(height) + 1, int(grid_spacing)):
+            start_pos = camera.world_to_screen(Vector2D(0, y))
+            end_pos = camera.world_to_screen(Vector2D(width, y))
+            pygame.draw.line(screen, self.grid_color, start_pos, end_pos, 1)
+
+    def _render_border(self, screen: pygame.Surface, width: float, height: float, camera):
+        """Render the arena border."""
+        top_left = camera.world_to_screen(Vector2D(0, 0))
+        top_right = camera.world_to_screen(Vector2D(width, 0))
+        bottom_right = camera.world_to_screen(Vector2D(width, height))
+        bottom_left = camera.world_to_screen(Vector2D(0, height))
+        
+        # Draw border lines
+        pygame.draw.line(screen, self.border_color, top_left, top_right, 2)
+        pygame.draw.line(screen, self.border_color, top_right, bottom_right, 2)
+        pygame.draw.line(screen, self.border_color, bottom_right, bottom_left, 2)
+        pygame.draw.line(screen, self.border_color, bottom_left, top_left, 2)
+
+    def _render_creature(
+        self, 
+        screen: pygame.Surface, 
+        creature, 
+        camera,
+        is_selected: bool, 
+        is_hovered: bool,
+        show_debug: bool
+    ):
+        """Render a single creature."""
+        # Convert position to screen coords
+        screen_pos = camera.world_to_screen(creature.spatial.position)
+        
+        # Calculate radius in screen pixels
+        # creature.spatial.radius is typically 0.5-2.0 units
+        # With zoom ~0.4 and base scale 10px/unit, this gives us 2-8px radius
+        # But we want creatures to be visible, so use a minimum base size
+        base_size = 14  # Base pixel size for creatures (increased from 8)
+        radius_px = int(base_size * camera.zoom * creature.spatial.radius)
+        radius_px = max(3, min(20, radius_px))  # Clamp between 3-20px
+        
+        # Color based on hue
+        color = pygame.Color(0)
+        color.hsva = (creature.creature.hue, 80, 80, 100)
+        
+        # Draw creature body
+        pygame.draw.circle(screen, color, screen_pos, radius_px)
+        
+        # Selection/Hover highlight
+        if is_selected:
+            pygame.draw.circle(screen, (255, 255, 255), screen_pos, radius_px + 2, 2)
+        elif is_hovered:
+            pygame.draw.circle(screen, (200, 200, 200), screen_pos, radius_px + 1, 1)
+            
+        # Health bar
+        self._render_health_bar(screen, creature, screen_pos, radius_px)
+        
+        # Debug info
+        if show_debug:
+            # Draw velocity vector
+            end_pos = (
+                screen_pos[0] + creature.spatial.velocity.x * 10 * camera.zoom,
+                screen_pos[1] + creature.spatial.velocity.y * 10 * camera.zoom
+            )
+            pygame.draw.line(screen, (0, 255, 0), screen_pos, end_pos, 1)
+            
+            # Draw target line
+            if creature.target:
+                target_pos = camera.world_to_screen(creature.target.spatial.position)
+                pygame.draw.line(screen, (255, 0, 0), screen_pos, target_pos, 1)
+
+    def _render_health_bar(self, screen: pygame.Surface, creature, screen_pos, radius_px):
+        """Render health bar above creature."""
+        width = radius_px * 2.5
+        height = max(3, radius_px * 0.4)
+        x = screen_pos[0] - width / 2
+        y = screen_pos[1] - radius_px - height - 2
+        
+        hp_pct = creature.creature.stats.hp / max(1, creature.creature.stats.max_hp)
+        hp_pct = max(0.0, min(1.0, hp_pct))
+        
+        # Background
+        pygame.draw.rect(screen, (50, 0, 0), (x, y, width, height))
+        
+        # Health
+        hp_color = (0, 255, 0)
+        if hp_pct < 0.5: hp_color = (255, 255, 0)
+        if hp_pct < 0.2: hp_color = (255, 0, 0)
+        
+        pygame.draw.rect(screen, hp_color, (x, y, width * hp_pct, height))
+
+    def _render_hazard(self, screen: pygame.Surface, hazard, camera):
+        """Render an environmental hazard."""
+        screen_pos = camera.world_to_screen(hazard.position)
+        
+        # Use base size approach like creatures, scale hazard radius appropriately
+        # Hazards in world units are typically 10-50, normalize to reasonable pixel sizes
+        base_size = 15  # Base pixel size for hazards (slightly larger than creatures)
+        radius_px = int(base_size * camera.zoom * (hazard.radius / 10.0))  # Normalize world units
+        radius_px = max(5, min(40, radius_px))  # Clamp to reasonable size
+        
+        # Draw hazard area (transparent)
+        surface = pygame.Surface((radius_px * 2, radius_px * 2), pygame.SRCALPHA)
+        color = (*self.hazard_color, 100)  # Add alpha
+        pygame.draw.circle(surface, color, (radius_px, radius_px), radius_px)
+        screen.blit(surface, (screen_pos[0] - radius_px, screen_pos[1] - radius_px))
+
+    def _render_resource(self, screen: pygame.Surface, pellet, camera):
+        """Render a resource pellet (fallback)."""
+        screen_pos = camera.world_to_screen(pellet.position)
+        radius_px = int(0.5 * camera.zoom * 10.0)  # Fixed size for now
+        
+        pygame.draw.circle(screen, self.resource_color, screen_pos, radius_px)
+
+    def _render_weather(self, screen: pygame.Surface, weather, camera):
+        """Render weather effects."""
+        if not weather or not weather.weather_type:
             return
             
-        weather_type = battle.environment.weather.weather_type.value
-        x, y, width, height = bounds
-        
-        if weather_type in self.weather_images:
-            img = self.weather_images[weather_type]
+        # Update animation
+        self.weather_offset += 0.5
+        if self.weather_offset > 100:
+            self.weather_offset = 0
             
-            # Create a tiling effect or just stretch for now
-            # For better performance and look, we'll stretch it to cover the arena
-            # but maintain some transparency
+        # Get weather image
+        if weather.weather_type in self.weather_images:
+            img = self.weather_images[weather.weather_type]
             
-            # Scale to arena size
-            scaled_img = pygame.transform.scale(img, (width, height))
+            # Scale to cover screen
+            screen_w, screen_h = screen.get_size()
+            scaled_img = pygame.transform.scale(img, (screen_w, screen_h))
             
-            # Set alpha based on intensity (could be dynamic)
-            scaled_img.set_alpha(100)  # Semi-transparent
+            # Apply alpha based on intensity
+            # Rain/Storm/Fog intensity affects opacity
+            alpha = 100 # Base alpha
             
-            screen.blit(scaled_img, (x, y))
-        else:
-            # Fallback overlays
-            overlay = pygame.Surface((width, height), pygame.SRCALPHA)
-            if weather_type == 'rainy':
-                overlay.fill((0, 0, 50, 30))  # Blue tint
-            elif weather_type == 'stormy':
-                overlay.fill((0, 0, 20, 60))  # Dark tint
-            elif weather_type == 'foggy':
-                overlay.fill((200, 200, 200, 40))  # White tint
-            elif weather_type == 'drought':
-                overlay.fill((255, 100, 0, 20))  # Orange tint
+            from ..models.environment import WeatherType
+            if weather.weather_type == WeatherType.RAINY:
+                alpha = int(100 * weather.precipitation)
+            elif weather.weather_type == WeatherType.STORMY:
+                alpha = int(150 * weather.precipitation)
+            elif weather.weather_type == WeatherType.FOGGY:
+                alpha = int(200 * (1.0 - weather.visibility))
+                
+            scaled_img.set_alpha(alpha)
+            screen.blit(scaled_img, (0, 0))
             
-            screen.blit(overlay, (x, y))
-    
-    def _draw_biome_boundaries(self, screen: pygame.Surface, bounds: tuple, battle):
-        """
-        Draw boundaries between biome regions.
-        
-        Args:
-            screen: Pygame surface
-            bounds: Arena bounds
-            battle: Battle object
-        """
-        if not battle.environment or not battle.environment.biome_regions:
-            return
-            
-        x, y, width, height = bounds
-        env = battle.environment
-        
-        # Draw lines for each region boundary
-        # Since we use a quadrant system, we can just draw the center cross
-        # But let's be generic and draw the bounds of each region
-        
-        boundary_color = (255, 255, 255, 100)  # Semi-transparent white
-        
-        for region in env.biome_regions:
-            bx, by, bw, bh = region.bounds
-            
-            # Convert to screen coords
-            screen_bx = x + (bx / env.width) * width
-            screen_by = y + (by / env.height) * height
-            screen_bw = (bw / env.width) * width
-            screen_bh = (bh / env.height) * height
-            
-            # Draw rectangle outline for region
-            pygame.draw.rect(screen, boundary_color, 
-                           (int(screen_bx), int(screen_by), int(screen_bw), int(screen_bh)), 
-                           1)
-    
-    def _world_to_screen(
-        self,
-        world_pos: Vector2D,
-        bounds: tuple,
-        arena
-    ) -> tuple:
-        """Convert world coordinates to screen coordinates."""
-        x, y, width, height = bounds
-        
-        screen_x = x + (world_pos.x / arena.width) * width
-        screen_y = y + (world_pos.y / arena.height) * height
-        
-        return (int(screen_x), int(screen_y))
-    
-    def _draw_hazard(
-        self,
-        screen: pygame.Surface,
-        hazard_pos: Vector2D,
-        bounds: tuple,
-        arena
-    ):
-        """Draw a hazard at the specified position."""
-        screen_pos = self._world_to_screen(hazard_pos, bounds, arena)
-        pygame.draw.circle(screen, self.hazard_color, screen_pos, 8)
-        pygame.draw.circle(screen, (255, 100, 100), screen_pos, 8, 2)
-    
-    def _draw_resource(
-        self,
-        screen: pygame.Surface,
-        resource_pos,
-        bounds: tuple,
-        arena
-    ):
-        """
-        Draw a resource/food at the specified position.
-        
-        Draws simple Vector2D resources as green circles.
-        Pellet objects should be rendered by PelletRenderer for detailed visualization.
-        """
-        # Handle both Vector2D and Pellet (for backward compatibility)
-        if isinstance(resource_pos, Pellet):
-            # Use pellet position
-            pos = Vector2D(resource_pos.x, resource_pos.y)
-        else:
-            pos = resource_pos
-        
-        screen_pos = self._world_to_screen(pos, bounds, arena)
-        # Draw food as a circle with a distinctive color
-        pygame.draw.circle(screen, (80, 200, 60), screen_pos, 8)  # Green center
-        pygame.draw.circle(screen, (120, 255, 100), screen_pos, 8, 2)  # Bright green outline
+            # For rain/storm, maybe draw a second layer with offset for movement
+            if weather.weather_type in [WeatherType.RAINY, WeatherType.STORMY]:
+                offset_y = int(self.weather_offset * 5) % screen_h
+                screen.blit(scaled_img, (0, offset_y - screen_h))
+                screen.blit(scaled_img, (0, offset_y))

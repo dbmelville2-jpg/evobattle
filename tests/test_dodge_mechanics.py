@@ -96,8 +96,9 @@ class TestDodgeMechanics(unittest.TestCase):
                 break
         
         # Count misses
-        miss_count = sum(1 for log in battle.battle_log if "missed" in log.lower())
-        hit_count = sum(1 for log in battle.battle_log if "takes" in log.lower() and "damage" in log.lower())
+        battle_log = battle.get_battle_log()
+        miss_count = sum(1 for log in battle_log if "missed" in log.lower())
+        hit_count = sum(1 for log in battle_log if "takes" in log.lower() and "damage" in log.lower())
         total_attacks = miss_count + hit_count
         
         if total_attacks > 0:

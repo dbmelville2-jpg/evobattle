@@ -6,6 +6,7 @@ Main entry point for running the unified game with all features.
 import pygame
 import random
 import sys
+import traceback
 from typing import List, Optional
 
 from src.models.creature import Creature, CreatureType
@@ -14,18 +15,23 @@ from src.models.ability import create_ability
 from src.models.trait import Trait
 from src.models.ecosystem_traits import (
     AGGRESSIVE, CAUTIOUS, FORAGER, EFFICIENT_METABOLISM,
-    CURIOUS, GLUTTON, VORACIOUS, WANDERER, PICKY_EATER, INDISCRIMINATE_EATER
+    CURIOUS, GLUTTON, VORACIOUS, WANDERER, PICKY_EATER, INDISCRIMINATE_EATER,
+    INTELLIGENT  # Neural brain learning trait
 )
+# Black & White systems
+from src.models.creature_beliefs import CreatureBeliefSystem
+from src.systems.observational_learning import ObservationalLearning
 from src.systems.battle_spatial import SpatialBattle
 from src.systems.living_world import LivingWorldBattleEnhancer
 from src.rendering import (
     GameWindow, ArenaRenderer, CreatureRenderer, PelletRenderer,
     UIComponents, EventAnimator, CreatureInspector, PauseMenu,
-    PauseMenuAction, PostGameSummary, StoryViewer, StoryViewerAction
+    PauseMenuAction, PostGameSummary,
+    Camera
 )
-from src.systems.battle_story_summarizer import (
-    BattleStoryGenerator, BattleStoryTracker, StoryTone
-)
+from src.rendering.scientific_cursor import ScientificCursor, CursorRenderer, CursorTool
+from src.controllers import ScientificCursorController
+from src.models.spatial import Vector2D
 from src.utils.name_generator import NameGenerator
 
 # Optional imports for trait injection & analytics - provide safe fallbacks
@@ -101,7 +107,10 @@ def create_creature(name: str, level: int = 5, traits: Optional[List[Trait]] = N
         >>> print(f"{creature.name} has {creature.stats.max_hp} HP")
     """
     if traits is None:
-        trait_pool = [AGGRESSIVE, CAUTIOUS, FORAGER, EFFICIENT_METABOLISM, CURIOUS, WANDERER]
+        trait_pool = [
+            AGGRESSIVE, CAUTIOUS, FORAGER, EFFICIENT_METABOLISM, 
+            CURIOUS, WANDERER, INTELLIGENT  # Added INTELLIGENT for neural learning
+        ]
         traits = random.sample(trait_pool, k=2)
 
     base_stats = Stats(
@@ -146,6 +155,17 @@ def create_creature(name: str, level: int = 5, traits: Optional[List[Trait]] = N
 
     if hasattr(creature, "hue"):
         creature.hue = random.uniform(0, 360)
+    
+    # NEW: Add Black & White systems
+    # Belief system for learned knowledge
+    creature.belief_system = CreatureBeliefSystem()
+    
+    # Observational learning system
+    creature.observational_learning = ObservationalLearning(
+        creature_id=creature.creature_id,
+        belief_system=creature.belief_system
+    )
+    creature.observational_learning.apply_trait_modifiers(creature.traits)
 
     return creature
 
@@ -199,10 +219,12 @@ def create_unified_battle() -> SpatialBattle:
     # Create battle with random biome
     battle = SpatialBattle(
         creatures_or_team1=creatures,
-        arena_width=160.0,
-        arena_height=100.0,
+        arena_width=200.0,
+        arena_height=200.0,
         biome_type='random',
-        enable_environment=True
+        enable_environment=True,
+        initial_resources=30,  # Start with plenty of food
+        resource_spawn_rate=0.5  # Spawn 0.5 pellets per second
     )
 
     # Create and attach enhancer
@@ -216,7 +238,7 @@ def create_unified_battle() -> SpatialBattle:
     return battle
 
 
-def get_creature_at_position(mouse_pos, battle, arena_renderer, window):
+def get_creature_at_position(mouse_pos, battle, camera):
     """
     Find the creature at the given mouse position for selection.
     
@@ -226,8 +248,7 @@ def get_creature_at_position(mouse_pos, battle, arena_renderer, window):
     Args:
         mouse_pos: Tuple of (x, y) screen coordinates from pygame mouse event
         battle: SpatialBattle instance containing creatures
-        arena_renderer: ArenaRenderer for coordinate conversion
-        window: GameWindow for screen dimensions
+        camera: Camera instance for coordinate conversion
     
     Returns:
         BattleCreature if one is found within click radius, None otherwise
@@ -240,11 +261,7 @@ def get_creature_at_position(mouse_pos, battle, arena_renderer, window):
     for bc in battle.creatures:
         if not bc.is_alive():
             continue
-        screen_pos = arena_renderer.world_to_screen(
-            bc.spatial.position,
-            window.screen,
-            battle.arena
-        )
+        screen_pos = camera.world_to_screen(bc.spatial.position)
         dx = mouse_pos[0] - screen_pos[0]
         dy = mouse_pos[1] - screen_pos[1]
         distance = (dx * dx + dy * dy) ** 0.5
@@ -261,7 +278,7 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
     - User input (keyboard and mouse)
     - Battle simulation updates
     - Rendering (creatures, pellets, UI, animations)
-    - Event handling (combat, reproduction, story generation)
+    - Event handling (combat, reproduction)
     - Trait injection based on population pressure
     - Pause/resume functionality
     - Post-game summary
@@ -269,7 +286,7 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
     Game Controls:
     - SPACE: Pause/Resume simulation
     - ESC: Open pause menu
-    - S: View AI-generated battle story
+    - ESC: Open pause menu
     - I: Toggle creature inspector panel
     - Click creatures: Select and inspect individual creatures
     - Mouse wheel: Scroll in creature inspector
@@ -298,27 +315,42 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
         - Population pressure is high (starvation, low health)
         - New generations are born
         
-    Story Generation:
-        AI-generated battle narratives are created every 5 minutes,
-        providing dramatic, comedic, or epic summaries of events.
+
     """
-    arena_renderer = ArenaRenderer(show_grid=False)
+    # Initialize renderers
+    from src.rendering.building_renderer import BuildingRenderer
+    building_renderer = BuildingRenderer()
+    arena_renderer = ArenaRenderer(show_grid=False, building_renderer=building_renderer)
     creature_renderer = CreatureRenderer()
     pellet_renderer = PelletRenderer(base_radius=6, show_generation=True)
-    ui_components = UIComponents(max_log_entries=10, show_pellet_stats=True)
+    ui_components = UIComponents(max_log_entries=5, show_pellet_stats=True)
+    
+    # Initialize Camera
+    # Use full window dimensions - UI panels will overlay the arena
+    viewport_width = window.width
+    viewport_height = window.height
+    
+    # Center camera on the arena (200x200)
+    arena_center = Vector2D(100, 100)  # Center of 200x200 arena
+    
+    # Calculate zoom to fit arena in viewport
+    # Arena is 200 units, base scale is 10px/unit
+    # So 200 units * 10px/unit * zoom = viewport_width
+    # zoom = viewport_width / (200 * 10) = viewport_width / 2000
+    initial_zoom = min(viewport_width / 2000, viewport_height / 2000) * 0.9  # 90% to add margin
+    
+    camera = Camera(viewport_width, viewport_height, initial_position=arena_center, initial_zoom=initial_zoom)
+    
+    # Initialize Scientific Cursor Controller
+    cursor_controller = ScientificCursorController(
+        ScientificCursor(),
+        CursorRenderer()
+    )
     event_animator = EventAnimator()
     creature_inspector = CreatureInspector()
     pause_menu = PauseMenu()
     post_game_summary = PostGameSummary()
-    story_viewer = StoryViewer(width=700, height=600)
     font = pygame.font.Font(None, 24)
-
-    story_generator = BattleStoryGenerator(default_tone=StoryTone.DRAMATIC)
-    story_tracker = BattleStoryTracker(generator=story_generator, story_interval_seconds=300.0)
-    try:
-        story_tracker.start_tracking()
-    except Exception:
-        pass
 
     arena_renderer.pellet_renderer = pellet_renderer
 
@@ -328,43 +360,43 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
     except Exception:
         pass
 
-    def on_battle_event(event):
-        try:
-            story_tracker.generator.add_event(event)
-        except Exception:
-            pass
-    try:
-        battle.add_event_callback(on_battle_event)
-    except Exception:
-        pass
+
 
     clock = pygame.time.Clock()
     running = True
     paused = False
+    simulation_speed = 1.0  # Speed multiplier: 0.5x, 1x, 2x, 5x, 10x
+    expanded_feed_mode = False  # Toggle between arena and expanded feed view
     selected_battle_creature = None
     show_summary = False
-    show_story = False
-    current_story = "Battle in progress... Story will be generated after 5 minutes of combat.\n\nPress 'S' to view this panel again at any time."
-    current_tone = StoryTone.DRAMATIC
-    last_story_notification = 0.0
 
     last_birth_count = getattr(battle, 'birth_count', 0)
     current_generation = 0
     last_pressure_check = -1.0
 
-    try:
-        story_viewer.set_story(current_story, current_tone)
-    except Exception:
-        pass
-
     print("\n=== Battle Started ===")
+
+    # FPS Monitoring
+    fps_update_timer = 0.0
+    fps_update_interval = 0.5
 
     while running:
         dt = clock.tick(60) / 1000.0
+        
+        # Update FPS in title
+        fps_update_timer += dt
+        if fps_update_timer >= fps_update_interval:
+            fps = clock.get_fps()
+            alive_count = len([c for c in battle.creatures if c.is_alive()])
+            pygame.display.set_caption(f"EvoBattle - FPS: {fps:.1f} | Creatures: {alive_count} | Pellets: {len(battle.arena.resources)}")
+            fps_update_timer = 0.0
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+            # Handle UI component interactions first (includes Dilemma, Toolbar, etc.)
+            if ui_components.handle_event(event, battle, cursor_controller.cursor):
+                continue
 
             if pause_menu.visible:
                 action = pause_menu.handle_input(event)
@@ -388,102 +420,143 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
                         pass
                 continue
 
-            if show_story:
-                try:
-                    result = story_viewer.handle_event(event, 350, 150)
-                except Exception:
-                    result = None
-                if result:
-                    action, data = result
-                    if action == StoryViewerAction.CLOSE:
-                        show_story = False
-                    elif action == StoryViewerAction.CHANGE_TONE:
-                        current_tone = data
-                        try:
-                            current_story = story_tracker.generator.generate_story(tone=current_tone)
-                            story_viewer.set_story(current_story, current_tone)
-                        except Exception:
-                            pass
-                    elif action == StoryViewerAction.REGENERATE:
-                        try:
-                            current_story = story_tracker.generator.generate_story(tone=current_tone)
-                            story_viewer.set_story(current_story, current_tone)
-                        except Exception:
-                            pass
-                    elif action == StoryViewerAction.EXPORT_TXT:
-                        try:
-                            filepath = "battle_story.txt"
-                            story_tracker.generator.export_story(current_story, filepath, 'txt')
-                        except Exception:
-                            pass
-                    elif action == StoryViewerAction.EXPORT_MD:
-                        try:
-                            filepath = "battle_story.md"
-                            story_tracker.generator.export_story(current_story, filepath, 'md')
-                        except Exception:
-                            pass
+
+
+            # Handle UI Events (including Toolbar)
+            # print(f"Event: {event.type}")
+            if ui_components.handle_event(event, battle, cursor_controller.cursor):
+                print("UI Handled Event")
                 continue
 
             if creature_inspector.handle_mouse_event(event, window.screen):
                 continue
 
+
+
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    if show_story:
-                        show_story = False
-                    elif creature_inspector.visible and not creature_inspector.is_pinned:
+                    if creature_inspector.visible and not creature_inspector.is_pinned:
                         creature_inspector.hide()
                     else:
                         pause_menu.show()
                         paused = True
                 elif event.key == pygame.K_SPACE:
-                    if not pause_menu.visible and not show_story:
+                    if not pause_menu.visible:
                         paused = not paused
-                elif event.key == pygame.K_s:
-                    show_story = not show_story
-                    if show_story:
-                        try:
-                            story_viewer.set_story(current_story, current_tone)
-                        except Exception:
-                            pass
+
                 elif event.key == pygame.K_i:
                     creature_inspector.toggle_visibility()
+                elif event.key == pygame.K_e:
+                    ui_components.show_ethics_dashboard = not ui_components.show_ethics_dashboard
+                elif event.key == pygame.K_a:
+                    ui_components.show_advisor_panel = not ui_components.show_advisor_panel
+                
+                # Simulation Speed Controls
+                elif event.key == pygame.K_q:
+                    simulation_speed = 0.5
+                    print(f"Speed: 0.5x")
+                elif event.key == pygame.K_w:
+                    simulation_speed = 1.0
+                    print(f"Speed: 1x (Normal)")
+                elif event.key == pygame.K_r:
+                    simulation_speed = 2.0
+                    print(f"Speed: 2x")
+                elif event.key == pygame.K_t:
+                    simulation_speed = 5.0
+                    print(f"Speed: 5x")
+                elif event.key == pygame.K_y:
+                    simulation_speed = 10.0
+                    print(f"Speed: 10x")
+                
+                # Expanded Feed Mode Toggle
+                elif event.key == pygame.K_f:
+                    expanded_feed_mode = not expanded_feed_mode
+                    mode_name = "EXPANDED FEED" if expanded_feed_mode else "ARENA VIEW"
+                    print(f"Mode: {mode_name}")
+                
+                # Scientific Tool Selection
+                elif event.key == pygame.K_1:
+                    cursor_controller.cursor.select_tool(CursorTool.OBSERVE)
+                elif event.key == pygame.K_2:
+                    cursor_controller.cursor.select_tool(CursorTool.FOOD_DISPENSER)
+                elif event.key == pygame.K_3:
+                    cursor_controller.cursor.select_tool(CursorTool.STIMULATOR)
+                elif event.key == pygame.K_4:
+                    cursor_controller.cursor.select_tool(CursorTool.MARKER)
 
-            elif event.type == pygame.MOUSEBUTTONDOWN:
+
+
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                mouse_pos = pygame.mouse.get_pos()
+                
                 if event.button == 1:
-                    mouse_pos = pygame.mouse.get_pos()
-                    clicked_creature = get_creature_at_position(mouse_pos, battle, arena_renderer, window)
+                    # Handle Scientific Cursor Tools via controller
+                    if cursor_controller.handle_event(event, battle, camera, get_creature_at_position):
+                        continue
+
+                    # Creature Selection
+                    clicked_creature = get_creature_at_position(mouse_pos, battle, camera)
                     if clicked_creature:
                         selected_battle_creature = clicked_creature
-                        creature_inspector.select_creature(clicked_creature.creature)
+                        creature_inspector.select_creature(clicked_creature)  # Pass BattleCreature, not just Creature
                         print(f"\nSelected: {clicked_creature.creature.name}")
 
+
             elif event.type == pygame.MOUSEWHEEL:
-                creature_inspector.handle_scroll(-event.y)
+                # Check if mouse is over creature inspector first
+                if creature_inspector.visible and creature_inspector._is_mouse_over_panel():
+                    # Only scroll the inspector, don't zoom camera
+                    creature_inspector.handle_scroll(-event.y)
+                else:
+                    # Only zoom camera when not over inspector
+                    if event.y > 0:
+                        camera.zoom_in(0.1)
+                    elif event.y < 0:
+                        camera.zoom_out(0.1)
+
+        # Update camera (smooth interpolation)
+        camera.update(dt)
+        
+        # Handle camera pan (middle mouse drag) - outside event loop for continuous input
+        if pygame.mouse.get_pressed()[1]:  # Middle button
+            rel = pygame.mouse.get_rel()
+            camera.pan(-rel[0] * 0.5, -rel[1] * 0.5)  # Scale down for smoother control
+        else:
+            pygame.mouse.get_rel()  # Clear relative movement
+        
+        if not paused and not getattr(battle, 'is_over', False) and not (hasattr(battle, 'pending_dilemma') and battle.pending_dilemma):
+            try:
+                # Apply simulation speed multiplier
+                adjusted_dt = dt * simulation_speed
+                # Debug: Print dt occasionally
+                # if random.random() < 0.01:
+                #    print(f"Update dt: {adjusted_dt:.4f}")
+                battle.update(adjusted_dt)
+            except Exception as e:
+                print(f"Error in battle.update: {e}")
+                traceback.print_exc()
             
-            # Handle UI component interactions (buttons, etc)
-            ui_components.handle_event(event, battle)
+            # Auto-resolve dilemmas in expanded feed mode
+            if expanded_feed_mode and hasattr(battle, 'pending_dilemma') and battle.pending_dilemma:
+                try:
+                    import random
+                    dilemma = battle.pending_dilemma
+                    # Randomly choose one of the available choices
+                    if hasattr(dilemma, 'choices') and dilemma.choices:
+                        random_choice_index = random.randint(0, len(dilemma.choices) - 1)
+                        random_choice = dilemma.choices[random_choice_index]
+                        # Resolve the dilemma with the choice index
+                        if hasattr(battle, 'resolve_dilemma'):
+                            battle.resolve_dilemma(random_choice_index)
+                        else:
+                            battle.pending_dilemma = None
+                        print(f"[AUTO-RESOLVED] Dilemma: {dilemma.title} -> {random_choice.text}")
+                except Exception as e:
+                    print(f"Error auto-resolving dilemma: {e}")
+                    battle.pending_dilemma = None
 
-        if not paused and not show_story and not getattr(battle, 'is_over', False):
-            try:
-                battle.update(dt)
-            except Exception:
-                pass
 
-            try:
-                for log in battle.get_battle_log():
-                    if log not in getattr(story_tracker.generator, 'battle_logs', []):
-                        story_tracker.generator.add_log(log)
-            except Exception:
-                pass
-
-            try:
-                if story_tracker.should_generate_story():
-                    current_story = story_tracker.generate_and_store_story(tone=current_tone)
-                    story_viewer.set_story(current_story, current_tone)
-                    last_story_notification = getattr(battle, 'current_time', 0.0)
-            except Exception:
-                pass
 
             # Trait injection checks
             try:
@@ -539,58 +612,49 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
 
         creature_inspector.update(dt)
         event_animator.update(dt)
+        cursor_controller.update(dt, getattr(battle, 'current_time', 0.0))
         try:
-            event_animator.process_events(window.screen, battle)
+            event_animator.process_events(window.screen, battle, camera)
         except Exception:
             pass
 
         window.screen.fill((20, 20, 30))
 
         try:
-            if show_story:
-                arena_renderer.render(window.screen, battle)
-                pellet_renderer.render(window.screen, battle)
-                creature_renderer.render(window.screen, battle)
-
-                dark_overlay = pygame.Surface((window.width, window.height))
-                dark_overlay.set_alpha(180)
-                dark_overlay.fill((0, 0, 0))
-                window.screen.blit(dark_overlay, (0, 0))
-
-                story_viewer.draw(window.screen, 350, 150)
+            if expanded_feed_mode:
+                # Expanded Feed Mode - Full screen battle feed
+                ui_components.render_expanded_feed(window.screen, battle, simulation_speed, paused)
             else:
-                arena_renderer.render(window.screen, battle)
-                pellet_renderer.render(window.screen, battle)
-                creature_renderer.render(window.screen, battle)
+                # Normal Arena Mode
+                arena_renderer.render(
+                    window.screen, 
+                    battle, 
+                    camera=camera,
+                    selected_creature_id=selected_battle_creature.creature.creature_id if selected_battle_creature else None,
+                    hovered_creature_id=None,
+                    show_debug=False
+                )
+                
+                # Render Scientific Cursor Markers
+                cursor_controller.render_markers(window.screen, camera)
 
                 if selected_battle_creature and selected_battle_creature.is_alive():
-                    screen_pos = arena_renderer.world_to_screen(
-                        selected_battle_creature.spatial.position,
-                        window.screen,
-                        battle.arena
-                    )
+                    screen_pos = camera.world_to_screen(selected_battle_creature.spatial.position)
+                    
+                    # Draw selection indicator (e.g. bracket or arrow)
+                    # For now, simple circle is handled by render, but maybe we want extra UI here?
+                    # Actually, render() already handles selection highlight.
+                    # This block might be for something else, let's see context.
+                    # It seems it was for drawing a line to target or similar.
+                    pass
                     pygame.draw.circle(window.screen, (255, 255, 0), (int(screen_pos[0]), int(screen_pos[1])), 30, 3)
 
-                event_animator.render(window.screen)
-                ui_components.render(window.screen, battle, paused)
+                event_animator.render(window.screen, camera)
+                ui_components.render(window.screen, battle, paused, cursor_controller.cursor)
+                cursor_controller.render_cursor(window.screen, pygame.mouse.get_pos())
                 creature_inspector.render(window.screen)
-
-                if not paused and getattr(battle, 'current_time', 0.0) - last_story_notification < 5.0:
-                    notification_font = pygame.font.Font(None, 36)
-                    notification_text = notification_font.render(
-                        "New Story Available! Press 'S' to view",
-                        True,
-                        (255, 215, 0)
-                    )
-                    x = (window.width - notification_text.get_width()) // 2
-                    y = 50
-                    bg_rect = notification_text.get_rect(topleft=(x-10, y-5))
-                    bg_rect.width += 20
-                    bg_rect.height += 10
-                    pygame.draw.rect(window.screen, (30, 30, 40), bg_rect)
-                    pygame.draw.rect(window.screen, (255, 215, 0), bg_rect, 2)
-                    window.screen.blit(notification_text, (x, y))
         except Exception:
+            traceback.print_exc()
             pass
 
         try:
@@ -604,21 +668,7 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
             except Exception:
                 pass
 
-        if not pause_menu.visible and not show_summary and not creature_inspector.visible and not show_story:
-            try:
-                instruction_text = font.render(
-                    "Click creatures! | I: Inspector | S: Story | SPACE: Pause | ESC: Menu",
-                    True,
-                    (255, 255, 100)
-                )
-                text_rect = instruction_text.get_rect(center=(window.width // 2, 50))
-                bg_rect = text_rect.inflate(20, 10)
-                bg_surface = pygame.Surface(bg_rect.size, pygame.SRCALPHA)
-                bg_surface.fill((0, 0, 0, 180))
-                window.screen.blit(bg_surface, bg_rect.topleft)
-                window.screen.blit(instruction_text, text_rect)
-            except Exception:
-                pass
+        # Instruction text removed - Scientific Toolbar now at top
 
         if paused and not pause_menu.visible:
             pause_font = pygame.font.Font(None, 48)

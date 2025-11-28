@@ -19,6 +19,7 @@ class StimulusType(Enum):
     EXPLORING = "exploring"     # Wandering and curiosity
     SOCIAL = "social"           # Interacting with allies
     HAZARD_AVOIDANCE = "hazard_avoidance"  # Avoiding environmental hazards
+    BUILDING = "building"       # Constructing structures
     IDLE = "idle"               # No particular focus
 
 
@@ -78,6 +79,11 @@ class AttentionManager:
             min_commitment_time=3.0,
             distraction_threshold=0.5  # Easy to distract wanderers
         ),
+        StimulusType.BUILDING: StimulusPriority(
+            base_priority=35.0,  # Lower than foraging (60.0) for non-builders
+            min_commitment_time=4.0,
+            distraction_threshold=0.3  # Harder to distract when building
+        ),
         StimulusType.IDLE: StimulusPriority(
             base_priority=0.0,
             min_commitment_time=0.0,
@@ -107,6 +113,7 @@ class AttentionManager:
         self.trait_modifiers = trait_modifiers or {}
         self.persistence_modifier = self.trait_modifiers.get('persistence', 1.0)
         self.distractibility_modifier = self.trait_modifiers.get('distractibility', 1.0)
+        self.building_priority_modifier = self.trait_modifiers.get('building_priority', 0.0)  # Additive modifier
         
         # Apply trait modifiers to default priorities
         self.priorities = self._apply_trait_modifiers(self.DEFAULT_PRIORITIES.copy())
@@ -133,6 +140,12 @@ class AttentionManager:
                 min_commitment_time=priority.min_commitment_time * self.persistence_modifier,
                 distraction_threshold=priority.distraction_threshold / self.distractibility_modifier
             )
+            
+            # Apply building-specific priority modifier
+            if stimulus_type == StimulusType.BUILDING:
+                modified_priority.base_priority += self.building_priority_modifier
+                # Clamp building priority to reasonable range
+                modified_priority.base_priority = max(10.0, min(90.0, modified_priority.base_priority))
             
             # Clamp values to reasonable ranges
             modified_priority.min_commitment_time = max(0.5, min(10.0, modified_priority.min_commitment_time))
@@ -358,5 +371,47 @@ def create_attention_manager_from_traits(traits: list) -> AttentionManager:
     if 'opportunist' in ' '.join(trait_names):
         modifiers['persistence'] = 0.6
         modifiers['distractibility'] = 1.3
+    
+    # Building trait priority modifiers (additive to base 35.0)
+    building_priority_bonus = 0.0
+    
+    # Positive building traits
+    if 'architect' in ' '.join(trait_names):
+        building_priority_bonus += 40.0  # 35 + 40 = 75 total
+        modifiers['persistence'] = modifiers.get('persistence', 1.0) * 0.8  # Slightly less commitment time
+    elif 'builder' in ' '.join(trait_names):
+        building_priority_bonus += 25.0  # 35 + 25 = 60 total
+        modifiers['persistence'] = modifiers.get('persistence', 1.0) * 0.9
+    
+    if 'material gatherer' in ' '.join(trait_names):
+        building_priority_bonus += 15.0  # 35 + 15 = 50 total
+    
+    if 'cooperative builder' in ' '.join(trait_names):
+        building_priority_bonus += 20.0  # 35 + 20 = 55 total
+    
+    if 'planner' in ' '.join(trait_names):
+        building_priority_bonus += 10.0  # 35 + 10 = 45 total
+        modifiers['persistence'] = modifiers.get('persistence', 1.0) * 1.5  # Longer commitment
+    
+    # Negative building traits (reduce priority)
+    if 'lazy' in ' '.join(trait_names):
+        building_priority_bonus -= 15.0  # 35 - 15 = 20 total
+        modifiers['persistence'] = modifiers.get('persistence', 1.0) * 1.5  # Avoids switching to work
+    
+    if 'impatient' in ' '.join(trait_names):
+        building_priority_bonus -= 10.0  # 35 - 10 = 25 total
+        modifiers['persistence'] = modifiers.get('persistence', 1.0) * 0.5  # Won't stick with tasks
+    
+    if 'aggressive' in ' '.join(trait_names):
+        building_priority_bonus -= 10.0  # 35 - 10 = 25 total (prefers combat)
+    
+    if 'wanderer' in ' '.join(trait_names):
+        building_priority_bonus -= 12.0  # 35 - 12 = 23 total (too restless)
+    
+    # Note: Distractible already handled above, but also reduces building effectiveness
+    # through reduced commitment time
+    
+    if building_priority_bonus != 0.0:
+        modifiers['building_priority'] = building_priority_bonus
     
     return AttentionManager(trait_modifiers=modifiers)

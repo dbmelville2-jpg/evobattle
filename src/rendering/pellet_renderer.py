@@ -48,38 +48,33 @@ class PelletRenderer:
         self.tiny_font = pygame.font.Font(None, 12)
         self.small_font = pygame.font.Font(None, 16)
     
-    def render(self, screen: pygame.Surface, battle: SpatialBattle):
+    def render(self, screen: pygame.Surface, pellets: list, camera):
         """
         Render all pellets in the battle.
         
         Args:
             screen: Pygame surface to draw on
-            battle: The spatial battle containing pellets
+            pellets: List of pellets to render
+            camera: Camera instance for coordinate transformation
         """
-        # Get pellets from arena
-        pellets = battle.arena.pellets
-        
         # Render each pellet
         for pellet in pellets:
-            self._render_pellet(screen, pellet, battle)
+            self._render_pellet(screen, pellet, camera)
     
     def _render_pellet(
         self,
         screen: pygame.Surface,
         pellet: Pellet,
-        battle: SpatialBattle
+        camera
     ):
         """Render a single pellet."""
         # Get screen position
-        screen_pos = self._world_to_screen(
-            Vector2D(pellet.x, pellet.y),
-            screen,
-            battle.arena
-        )
+        screen_pos = camera.world_to_screen(Vector2D(pellet.x, pellet.y))
         
         # Calculate radius based on size trait
-        radius = int(self.base_radius * pellet.get_display_size())
-        radius = max(3, min(15, radius))  # Clamp between 3 and 15 pixels
+        # Scale radius by zoom
+        radius = int(self.base_radius * pellet.get_display_size() * camera.zoom)
+        radius = max(2, min(12, radius))  # Clamp size - pellets should be smaller than creatures
         
         # Get color from pellet traits
         color = pellet.get_display_color()
@@ -88,6 +83,16 @@ class PelletRenderer:
         if pellet.traits.toxicity > 0:
             toxicity_factor = 1.0 - (pellet.traits.toxicity * 0.5)  # Up to 50% darker
             color = tuple(int(c * toxicity_factor) for c in color)
+            
+        # Apply disease tint if infected
+        if hasattr(pellet, 'active_infection') and pellet.active_infection:
+            infection = pellet.active_infection
+            tint = infection.disease.color_tint
+            # Blend base color with tint (stronger for pellets)
+            color = tuple(
+                int(c * 0.5 + tint[i] * 0.5)
+                for i, c in enumerate(color)
+            )
         
         # Draw pellet body (filled circle)
         pygame.draw.circle(screen, color, screen_pos, radius)
@@ -101,8 +106,12 @@ class PelletRenderer:
         
         # Show generation number for evolved pellets (gen > 0)
         if self.show_generation and pellet.generation > 0:
+            # Scale font size with zoom
+            font_size = max(10, int(12 * camera.zoom))
+            font = pygame.font.Font(None, font_size)
+            
             gen_text = str(pellet.generation)
-            text_surface = self.tiny_font.render(gen_text, True, (255, 255, 255))
+            text_surface = font.render(gen_text, True, (255, 255, 255))
             text_rect = text_surface.get_rect(center=screen_pos)
             
             # Draw small black background for readability
@@ -117,7 +126,7 @@ class PelletRenderer:
         # Visual indicator for high nutrition (glow effect)
         if pellet.get_nutritional_value() > 60:
             glow_color = (*color, 80)  # Semi-transparent glow
-            glow_radius = radius + 3
+            glow_radius = radius + 2  # Fixed 2px glow, independent of zoom
             glow_surface = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
             pygame.draw.circle(glow_surface, glow_color, (glow_radius, glow_radius), glow_radius)
             screen.blit(glow_surface, (screen_pos[0] - glow_radius, screen_pos[1] - glow_radius))
@@ -190,36 +199,3 @@ class PelletRenderer:
             text_surface = self.small_font.render(line, True, (255, 255, 255))
             screen.blit(text_surface, (tooltip_x + padding, tooltip_y + y_offset))
             y_offset += line_height
-    
-    def _world_to_screen(
-        self,
-        world_pos: Vector2D,
-        screen: pygame.Surface,
-        arena
-    ) -> tuple:
-        """
-        Convert world coordinates to screen coordinates.
-        
-        Uses margins that match arena_renderer.py to ensure pellets
-        are rendered within the visible arena bounds, not under UI panels.
-        """
-        screen_width = screen.get_width()
-        screen_height = screen.get_height()
-        
-        # Margins match arena_renderer.py for consistency
-        # Left margin for GENETIC STRAINS panel
-        ui_margin_left = 250
-        # Right margin for CREATURES and PELLET ECOSYSTEM panels
-        ui_margin_right = 250
-        # Top margin for header/title
-        ui_margin_top = 80
-        # Bottom margin for Battle Feed
-        ui_margin_bottom = 200
-        
-        arena_width = screen_width - ui_margin_left - ui_margin_right
-        arena_height = screen_height - ui_margin_top - ui_margin_bottom
-        
-        screen_x = ui_margin_left + (world_pos.x / arena.width) * arena_width
-        screen_y = ui_margin_top + (world_pos.y / arena.height) * arena_height
-        
-        return (int(screen_x), int(screen_y))

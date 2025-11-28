@@ -8,7 +8,9 @@ and pause/status indicators.
 import pygame
 from typing import List, Deque
 from collections import deque
-from ..systems.battle_spatial import SpatialBattle, BattleEvent, BattleEventType
+from ..systems.battle_spatial import SpatialBattle
+from ..systems.battle_events import BattleEvent, BattleEventType
+from .scientific_cursor import ScientificCursor, CursorTool
 
 
 class UIComponents:
@@ -46,6 +48,10 @@ class UIComponents:
         # Display options
         self.show_pellet_stats = show_pellet_stats
         
+        # Load tool icons
+        self.tool_icons = {}
+        self._load_tool_icons()
+        
         # Colors
         self.text_color = (255, 255, 255)
         self.panel_bg = (20, 20, 30, 180)
@@ -59,17 +65,51 @@ class UIComponents:
 
         # Controls panel sizing - ensure other panels can reserve space
         self.controls_panel_height = 240
-
         # Debug / interaction state
         self._last_click_info = None
         self._pressed_button = None
         self._pressed_time = 0.0
-
         # Genetic Strain Panel State
         self.strain_scroll_offset = 0
+        # Pellet Panel State
+        self.pellet_scroll_offset = 0
+        self.pellet_panel_rect = None
         self.selected_strain_id = None
         self.strain_panel_rect = None  # Will be updated in render
         self.strain_item_rects = {}    # Map strain_id -> rect for click detection
+        self.strain_panel_mode = "GENETIC" # "GENETIC" or "DISEASE"
+        self.strain_panel_mode = "GENETIC" # "GENETIC" or "DISEASE"
+        self.strain_tab_rects = {}
+        
+        # Popup State
+        self.popup_scroll_offset = 0
+        self._popup_button_rects = {}
+        self._popup_content_height = 0
+        
+        # Dilemma UI State
+        self.dilemma_choice_rects = {} # Map choice_index -> rect
+        self.ask_advisor_rect = None
+        self.advisor_panel_rect = None
+        self.advisor_close_rect = None
+        self.show_advisor_panel = False
+        self.show_ethics_dashboard = False
+        
+        # Scientific Tools
+        self.selected_tool = None # InterventionType value
+        self.tool_rects = {}
+        
+        # Collapsible Panel States (True = Expanded, False = Collapsed)
+        self.panel_states = {
+            'weather': True,
+            'biome': True,
+            'genetic': True,
+            'stats': True,
+            'pellets': True,
+            'controls': True,
+            'log': True,
+            'overseer': True
+        }
+        self.toggle_buttons = {} # Map panel_name -> rect
     
     def add_event_to_log(self, event: BattleEvent):
         """
@@ -92,13 +132,17 @@ class UIComponents:
         ]:
             self.event_log.append(event.message)
 
-    def handle_event(self, event: pygame.event.Event, battle: SpatialBattle):
+    def handle_event(self, event: pygame.event.Event, battle: SpatialBattle, scientific_cursor: ScientificCursor = None) -> bool:
         """
-        Handle input events for UI interaction.
+        Handle UI interaction events.
         
         Args:
             event: Pygame event
-            battle: The spatial battle instance
+            battle: Battle instance
+            scientific_cursor: Optional ScientificCursor instance
+            
+        Returns:
+            bool: True if event was handled by UI, False otherwise
         """
         # Ensure rects exist
         if not self._control_button_rects:
@@ -107,10 +151,67 @@ class UIComponents:
              except Exception:
                  self._control_button_rects = {}
 
+        mouse_pos = pygame.mouse.get_pos()
+
+        if event.type == pygame.MOUSEWHEEL:
+            # Check for Pellet Panel Scroll
+            if self.pellet_panel_rect and self.pellet_panel_rect.collidepoint(mouse_pos):
+                self.pellet_scroll_offset = max(0, self.pellet_scroll_offset - event.y * 20)
+                return True
+
         if event.type == pygame.MOUSEBUTTONDOWN:
-            mouse_pos = pygame.mouse.get_pos()
+            # Ignore scroll wheel button events (4=scroll up, 5=scroll down)
+            # These are handled by MOUSEWHEEL event handler
+            if event.button in (4, 5):
+                return False
             
-            # Check controls panel buttons
+            # 0. Check Panel Toggle Buttons (Highest Priority for UI)
+            if event.button == 1:
+                for panel_name, rect in self.toggle_buttons.items():
+                    if rect.collidepoint(mouse_pos):
+                        self.panel_states[panel_name] = not self.panel_states.get(panel_name, True)
+                        return True
+            
+            # 1. Check Dilemma Popup Interactions (High Priority)
+            if hasattr(battle, 'pending_dilemma') and battle.pending_dilemma:
+                # Check Advisor Panel Close
+                if self.show_advisor_panel and self.advisor_close_rect:
+                    if self.advisor_close_rect.collidepoint(mouse_pos):
+                        self.show_advisor_panel = False
+                        return True
+                
+                # Check Ask Advisor Button
+                if self.ask_advisor_rect and self.ask_advisor_rect.collidepoint(mouse_pos):
+                    self.show_advisor_panel = not self.show_advisor_panel
+                    return True
+                    
+                # Check Dilemma Choices (only if advisor panel is closed)
+                if not self.show_advisor_panel:
+                    for i, rect in self.dilemma_choice_rects.items():
+                        if rect.collidepoint(mouse_pos):
+                            # Make choice
+                            battle.resolve_dilemma(i)
+                            self.show_advisor_panel = False # Reset for next time
+                            return True
+                
+                # Block other clicks while dilemma is active
+                return True
+
+            # 2. Check Scientific Toolbar clicks
+            if self.tool_rects:
+                if event.button == 1: # Left click
+                    for tool, rect in self.tool_rects.items():
+                        if rect.collidepoint(mouse_pos):
+                            print(f"Toolbar clicked! Selected {tool}")
+                            if scientific_cursor:
+                                scientific_cursor.select_tool(tool)
+                                # Clear legacy selection just in case
+                                self.selected_tool = None
+                            else:
+                                print("Scientific cursor is None!")
+                            return True
+
+            # 3. Check Controls Panel clicks
             for btn_key, rect in self._control_button_rects.items():
                 if rect.collidepoint(mouse_pos):
                     self._pressed_button = btn_key
@@ -119,9 +220,17 @@ class UIComponents:
                     # Execute action immediately
                     try:
                         if btn_key == 'spawn_rate_plus':
-                            battle.resource_spawn_rate = min(5.0, getattr(battle, 'resource_spawn_rate', 0.0) + 0.1)
+                            new_rate = min(5.0, getattr(battle, 'resource_spawn_rate', 0.0) + 0.1)
+                            battle.resource_spawn_rate = new_rate
+                            # Update ResourceManager's spawn rate
+                            if hasattr(battle, 'resource_manager'):
+                                battle.resource_manager.spawn_rate = new_rate
                         elif btn_key == 'spawn_rate_minus':
-                            battle.resource_spawn_rate = max(0.0, getattr(battle, 'resource_spawn_rate', 0.0) - 0.1)
+                            new_rate = max(0.0, getattr(battle, 'resource_spawn_rate', 0.0) - 0.1)
+                            battle.resource_spawn_rate = new_rate
+                            # Update ResourceManager's spawn rate
+                            if hasattr(battle, 'resource_manager'):
+                                battle.resource_manager.spawn_rate = new_rate
                         elif btn_key == 'breed_cd_plus':
                             battle.breeding_cooldown = min(30.0, getattr(battle, 'breeding_cooldown', 20.0) + 1.0)
                         elif btn_key == 'breed_cd_minus':
@@ -144,10 +253,18 @@ class UIComponents:
                                 battle.environment._change_weather()
                     except Exception as e:
                         print(f"UI Action Error: {e}")
-                    return
+                    return True
 
-            # Check Genetic Strain Panel clicks
+            # 4. Check Genetic Strain Panel clicks
             if self.strain_panel_rect and self.strain_panel_rect.collidepoint(mouse_pos):
+                # Check Tabs
+                for mode, rect in self.strain_tab_rects.items():
+                    if rect.collidepoint(mouse_pos):
+                        self.strain_panel_mode = mode
+                        self.selected_strain_id = None # Reset selection on tab switch
+                        self.strain_scroll_offset = 0
+                        return True
+
                 # Check individual strain items
                 clicked_strain = None
                 for strain_id, rect in self.strain_item_rects.items():
@@ -160,59 +277,69 @@ class UIComponents:
                         self.selected_strain_id = None # Deselect
                     else:
                         self.selected_strain_id = clicked_strain
-                return
+                return True
             
-            # If a strain is selected and user clicks anywhere else, close the popup
-            if self.selected_strain_id:
-                self.selected_strain_id = None
-                return
+            # 4.5 Check Popup Button Clicks
+            if self.selected_strain_id and self._popup_button_rects:
+                for action, rect in self._popup_button_rects.items():
+                    if rect.collidepoint(mouse_pos):
+                        try:
+                            if action == "cull":
+                                battle.cull_strain(self.selected_strain_id)
+                            elif action == "boost":
+                                battle.boost_strain_fertility(self.selected_strain_id)
+                        except Exception as e:
+                            print(f"Popup Action Error: {e}")
+                        return True
 
-            # Check Overseer Panel clicks
+            # If a strain is selected and user clicks anywhere else (and not on popup), close it
+            if self.selected_strain_id:
+                # Check if click is inside popup
+                sw, sh = screen.get_size() if 'screen' in locals() else pygame.display.get_surface().get_size()
+                popup_rect = pygame.Rect((sw - 400)//2, (sh - 500)//2, 400, 500)
+                if not popup_rect.collidepoint(mouse_pos):
+                    self.selected_strain_id = None
+                    self.popup_scroll_offset = 0 # Reset scroll
+                return True
+
+            # 5. Check Overseer Panel clicks
             if hasattr(self, 'overseer_btn_rects') and battle.overseer:
                 from ..systems.experiment_overseer_system import ProtocolType
                 for p_value, rect in self.overseer_btn_rects.items():
                     if rect.collidepoint(mouse_pos):
-                        # Execute protocol
-                        # Convert string value back to enum if needed, or just pass value if system handles it
-                        # The system expects ProtocolType enum
                         try:
                             p_type = ProtocolType(p_value)
-                            # For targeted protocols, we might need a targeting mode
-                            # For now, let's just execute non-targeted ones or random target
-                            # Ideally, we enter a "targeting mode"
-                            
-                            if p_type in [ProtocolType.DISPENSE_NUTRIENTS, ProtocolType.NEURAL_SHOCK, ProtocolType.GENETIC_BOOST, ProtocolType.INDUCE_MUTATION, ProtocolType.SAMPLE_COLLECTION]:
-                                # If it requires a target, we should probably set a "targeting" state
-                                # But for simplicity in this iteration, let's try to execute
-                                # If it needs a target and none provided, the system might fail or pick random
-                                # Let's implement a simple "click to target" flow later if needed
-                                # For now, pass the mouse position for area effects
-                                
-                                # Convert screen pos to world pos
-                                # We need the arena renderer for this... which we don't have here easily
-                                # But we can approximate or just let the system handle "random" if None
-                                
-                                # Actually, for targeted skills, we should probably select the protocol first, then click the target
-                                # But let's just try to execute it. If it's "Dispense Nutrients", it works.
-                                # If it's "Neural Shock", it needs a target.
-                                
-                                # Let's just execute it. The system handles defaults.
-                                battle.overseer.execute_protocol(p_type)
+                            battle.overseer.execute_protocol(p_type)
                         except Exception as e:
                             print(f"Protocol Error: {e}")
-                        return
+                        return True
 
         elif event.type == pygame.MOUSEBUTTONUP:
             self._pressed_button = None
             
         elif event.type == pygame.MOUSEWHEEL:
-            # Check if mouse is over strain panel
             mouse_pos = pygame.mouse.get_pos()
             
+            # Check if mouse is over strain panel
             if self.strain_panel_rect and self.strain_panel_rect.collidepoint(mouse_pos):
                 # Scroll
                 self.strain_scroll_offset -= event.y * 20
                 self.strain_scroll_offset = max(0, self.strain_scroll_offset)
+                return True
+                
+            # Check if mouse is over popup (if open)
+            if self.selected_strain_id:
+                # Simple check: center of screen roughly
+                sw, sh = pygame.display.get_surface().get_size()
+                popup_rect = pygame.Rect((sw - 400)//2, (sh - 500)//2, 400, 500)
+                if popup_rect.collidepoint(mouse_pos):
+                    self.popup_scroll_offset -= event.y * 20
+                    # Clamp scroll (max calculated in render)
+                    max_scroll = max(0, self._popup_content_height - 350) # Approx view height
+                    self.popup_scroll_offset = max(0, min(self.popup_scroll_offset, max_scroll))
+                    return True
+        
+        return False
     
     def _get_cached_text(self, text: str, font: pygame.font.Font, color: tuple) -> pygame.Surface:
         """
@@ -242,7 +369,7 @@ class UIComponents:
         
         return self._text_cache[cache_key]
     
-    def render(self, screen: pygame.Surface, battle: SpatialBattle, paused: bool = False):
+    def render(self, screen: pygame.Surface, battle: SpatialBattle, paused: bool, scientific_cursor: ScientificCursor = None):
         """
         Render all UI components.
         
@@ -250,13 +377,11 @@ class UIComponents:
             screen: Pygame surface to draw on
             battle: The spatial battle to display info for
             paused: Whether the game is paused
+            scientific_cursor: Optional ScientificCursor instance
         """
         # Clear interactive rects at start of render to avoid stale geometry
         self._control_button_rects = {}
 
-        # Top bar - Battle title and time
-        self._render_top_bar(screen, battle)
-        
         # Weather panel (top left)
         self._render_weather_panel(screen, battle)
         
@@ -265,6 +390,9 @@ class UIComponents:
         
         # Genetic strains panel (left side, below biome panel)
         self._render_genetic_strains_panel(screen, battle)
+        
+        # World Stats Panel (Right side, below controls)
+        self._render_world_stats_panel(screen, battle)
         
         # Pellet statistics panel (if enabled and pellets exist)
         if self.show_pellet_stats and battle.arena.pellets:
@@ -278,12 +406,13 @@ class UIComponents:
             pass
 
         # Experiment Overseer Control Panel (Right Side)
-        if hasattr(battle, 'overseer') and battle.overseer:
-            try:
-                self._render_overseer_panel(screen, battle)
-            except Exception as e:
-                print(f"Overseer UI Error: {e}")
-                pass
+        # REMOVED: User requested removal of experimental controls
+        # if hasattr(battle, 'overseer') and battle.overseer:
+        #     try:
+        #         self._render_overseer_panel(screen, battle)
+        #     except Exception as e:
+        #         print(f"Overseer UI Error: {e}")
+        #         pass
 
         # Event log (bottom)
         self._render_event_log(screen)
@@ -295,75 +424,248 @@ class UIComponents:
         # Battle end overlay
         if battle.is_over:
             self._render_battle_end(screen, battle)
-    
-    def _render_top_bar(self, screen: pygame.Surface, battle: SpatialBattle):
+            
+        # Dilemma Popup (High Priority Overlay)
+        if hasattr(battle, 'pending_dilemma') and battle.pending_dilemma:
+            self.render_dilemma_popup(screen, battle.pending_dilemma)
+            
+        # Assistant Panel (Overlay)
+        if self.show_advisor_panel:
+            self.render_assistant_panel(screen, battle)
+            
+        # Ethics Dashboard (Overlay)
+        if self.show_ethics_dashboard:
+            self.render_ethics_dashboard(screen, battle)
+            
+        # Scientific Toolbar (Always visible)
+        self.render_scientific_toolbar(screen, battle, scientific_cursor)
+
+
+
+    def _load_tool_icons(self):
+        """Load tool icons from assets."""
+        import os
+        assets_dir = "assets/icons"
+        
+        icon_map = {
+            CursorTool.OBSERVE: "observe.png",
+            CursorTool.FOOD_DISPENSER: "dispenser.png",
+            CursorTool.STIMULATOR: "stimulator.png",
+            CursorTool.MARKER: "marker.png",
+            CursorTool.SAMPLER: "sampler.png",
+            CursorTool.RELOCATOR: "relocator.png",
+            CursorTool.BARRIER: "barrier.png",
+            CursorTool.PHEROMONE: "pheromone.png",
+            CursorTool.ASTEROID: "asteroid.png",
+            CursorTool.APEX: "apex.png"
+        }
+        
+        for tool, filename in icon_map.items():
+            path = os.path.join(assets_dir, filename)
+            if os.path.exists(path):
+                try:
+                    image = pygame.image.load(path).convert_alpha()
+                    image = pygame.transform.scale(image, (32, 32))
+                    self.tool_icons[tool] = image
+                except Exception:
+                    pass
+
+    def render_scientific_toolbar(self, screen: pygame.Surface, battle: SpatialBattle, scientific_cursor: ScientificCursor = None):
         """
-        Render the top information bar.
+        Render the toolbar for scientific intervention tools.
         
-        Displays title, time, and ecosystem stats (Food count, Births, Deaths).
+        Args:
+            screen: Pygame surface
+            battle: Battle instance
+            scientific_cursor: Optional ScientificCursor instance
         """
-        screen_width = screen.get_width()
+        if not scientific_cursor:
+            return
+
+        # Toolbar dimensions
+        item_size = 40
+        padding = 8
         
-        # Semi-transparent background
-        bar_rect = pygame.Rect(0, 0, screen_width, 80)
-        bar_surface = pygame.Surface((screen_width, 80), pygame.SRCALPHA)
-        pygame.draw.rect(bar_surface, self.panel_bg, bar_rect)
-        screen.blit(bar_surface, (0, 0))
+        # All tools from ScientificCursor
+        tools = [
+            CursorTool.OBSERVE, CursorTool.FOOD_DISPENSER, CursorTool.STIMULATOR, CursorTool.MARKER, 
+            CursorTool.SAMPLER, CursorTool.RELOCATOR, CursorTool.BARRIER, CursorTool.PHEROMONE, 
+            CursorTool.ASTEROID, CursorTool.APEX
+        ]
         
-        # Title
-        title_text = "EvoBattle - Spatial Combat Arena"
-        title_surface = self._get_cached_text(title_text, self.title_font, self.text_color)
-        title_rect = title_surface.get_rect(center=(screen_width // 2, 25))
-        screen.blit(title_surface, title_rect)
+        width = len(tools) * (item_size + padding) + padding
+        height = item_size + 2 * padding
+        x = (screen.get_width() - width) // 2
+        y = 10 # Top center
         
-        # Controls hint (centered below title)
-        controls_text = "Click creatures to inspect! | I: Inspector | SPACE: Pause | ESC: Menu"
-        controls_surface = self._get_cached_text(controls_text, self.small_font, (180, 180, 180))
-        controls_rect = controls_surface.get_rect(center=(screen_width // 2, 55))
-        screen.blit(controls_surface, controls_rect)
+        # Background
+        bg_rect = pygame.Rect(x, y, width, height)
+        pygame.draw.rect(screen, (30, 30, 40, 230), bg_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 100, 120), bg_rect, 2, border_radius=10)
         
-        # Ecosystem stats in top right
-        # Count pellets (food)
-        food_count = len(battle.arena.pellets) if hasattr(battle.arena, 'pellets') else 0
+        # Energy Bar (Horizontal, to the left of toolbar)
+        bar_height = 12
+        bar_width = 150
+        bar_x = x - bar_width - 15
+        bar_y = y + (height - bar_height) // 2  # Center vertically with toolbar
         
-        # Count births and deaths from battle events
-        births = sum(1 for e in battle.events if hasattr(e, 'event_type') and 
-                     str(e.event_type) in ['CREATURE_BIRTH', 'BattleEventType.CREATURE_BIRTH'])
-        deaths = sum(1 for e in battle.events if hasattr(e, 'event_type') and 
-                     str(e.event_type) in ['CREATURE_DEATH', 'BattleEventType.CREATURE_DEATH', 
-                                            'CREATURE_FAINT', 'BattleEventType.CREATURE_FAINT'])
+        # Bar Background
+        pygame.draw.rect(screen, (20, 20, 30), (bar_x, bar_y, bar_width, bar_height), border_radius=6)
+        pygame.draw.rect(screen, (60, 60, 70), (bar_x, bar_y, bar_width, bar_height), 1, border_radius=6)
         
-        # Display stats on the right side
-        stats_x = screen_width - 180
-        stats_y = 15
+        # Bar Fill
+        fill_pct = scientific_cursor.tool_charge / scientific_cursor.max_charge
+        fill_width = int((bar_width - 4) * fill_pct)
+        fill_rect = pygame.Rect(bar_x + 2, bar_y + 2, fill_width, bar_height - 4)
         
-        food_text = f"Food: {food_count}"
-        food_surface = self._get_cached_text(food_text, self.text_font, (150, 255, 150))
-        screen.blit(food_surface, (stats_x, stats_y))
+        # Color based on charge (Blue -> Cyan)
+        bar_color = (0, 150 + int(105 * fill_pct), 255)
+        pygame.draw.rect(screen, bar_color, fill_rect, border_radius=4)
         
-        births_text = f"Births: {births}"
-        births_surface = self._get_cached_text(births_text, self.text_font, (100, 255, 255))
-        screen.blit(births_surface, (stats_x, stats_y + 22))
+        # Energy text overlay
+        energy_text = f"{int(scientific_cursor.tool_charge)}/{int(scientific_cursor.max_charge)}"
+        energy_surf = self.small_font.render(energy_text, True, (255, 255, 255))
+        text_x = bar_x + (bar_width - energy_surf.get_width()) // 2
+        text_y = bar_y + (bar_height - energy_surf.get_height()) // 2
+        screen.blit(energy_surf, (text_x, text_y))
         
-        deaths_text = f"Deaths: {deaths}"
-        deaths_surface = self._get_cached_text(deaths_text, self.text_font, (255, 150, 150))
-        screen.blit(deaths_surface, (stats_x, stats_y + 44))
+        # Tools
+        self.tool_rects = {}
+        curr_x = x + padding
+        
+        for tool in tools:
+            rect = pygame.Rect(curr_x, y + padding, item_size, item_size)
+            self.tool_rects[tool] = rect
+            
+            # Highlight if selected
+            is_selected = (scientific_cursor.current_tool == tool)
+            
+            # Draw button background
+            if is_selected:
+                pygame.draw.rect(screen, (100, 200, 255), rect, border_radius=5)
+                pygame.draw.rect(screen, (50, 100, 150), rect.inflate(-4, -4), border_radius=5)
+            else:
+                pygame.draw.rect(screen, (60, 60, 70), rect, border_radius=5)
+            
+            # Draw Icon
+            if tool in self.tool_icons:
+                icon = self.tool_icons[tool]
+                # Center icon
+                icon_rect = icon.get_rect(center=rect.center)
+                screen.blit(icon, icon_rect)
+            else:
+                # Fallback: First letter
+                letter = tool.value[0].upper()
+                txt = self.title_font.render(letter, True, (200, 200, 200))
+                screen.blit(txt, (rect.centerx - txt.get_width()//2, rect.centery - txt.get_height()//2))
+            
+            # Tooltip on hover
+            mouse_pos = pygame.mouse.get_pos()
+            if rect.collidepoint(mouse_pos):
+                # Tool Name
+                name = scientific_cursor.get_tool_name() if is_selected else tool.value.replace("_", " ").title()
+                if tool == CursorTool.FOOD_DISPENSER: name = "Food Dispenser"
+                
+                tooltip = self.small_font.render(name, True, (255, 255, 255))
+                
+                # Draw tooltip background
+                tt_rect = tooltip.get_rect(midtop=(rect.centerx, rect.bottom + 5))
+                bg_tt = tt_rect.inflate(10, 6)
+                pygame.draw.rect(screen, (20, 20, 30), bg_tt, border_radius=4)
+                pygame.draw.rect(screen, (100, 100, 100), bg_tt, 1, border_radius=4)
+                
+                screen.blit(tooltip, tt_rect)
+            
+            curr_x += item_size + padding
+
+    def _render_panel_container(self, screen: pygame.Surface, x: int, y: int, width: int, height: int, title: str, panel_name: str) -> bool:
+        """
+        Render a generic panel container with a title and collapse toggle.
+        
+        Args:
+            screen: Pygame surface
+            x, y, width, height: Panel dimensions (height is fully expanded height)
+            title: Panel title text
+            panel_name: Key for panel_states dict
+            
+        Returns:
+            bool: True if panel is expanded and content should be rendered, False if collapsed
+        """
+        is_expanded = self.panel_states.get(panel_name, True)
+        
+        # Header height
+        header_h = 28
+        
+        # Current height depends on state
+        current_h = height if is_expanded else header_h
+        
+        # Background - Solid dark blue-grey for "Clean" look
+        bg_rect = pygame.Rect(x, y, width, current_h)
+        # Main panel body
+        if is_expanded:
+            # Body background
+            body_rect = pygame.Rect(x, y + header_h, width, current_h - header_h)
+            pygame.draw.rect(screen, (25, 25, 35), body_rect, border_bottom_left_radius=8, border_bottom_right_radius=8)
+            pygame.draw.rect(screen, (60, 70, 90), body_rect, 1, border_bottom_left_radius=8, border_bottom_right_radius=8)
+        
+        # Header Background - Slightly lighter/vibrant
+        header_rect = pygame.Rect(x, y, width, header_h)
+        header_color = (40, 45, 60)
+        
+        # Rounded corners for top
+        pygame.draw.rect(screen, header_color, header_rect, border_top_left_radius=8, border_top_right_radius=8)
+        if not is_expanded:
+            # Rounded all around if collapsed
+            pygame.draw.rect(screen, header_color, header_rect, border_radius=8)
+            
+        # Header Border
+        pygame.draw.rect(screen, (80, 90, 110), header_rect, 1, border_top_left_radius=8, border_top_right_radius=8)
+        if not is_expanded:
+             pygame.draw.rect(screen, (80, 90, 110), header_rect, 1, border_radius=8)
+            
+        # Title - White and crisp
+        title_surf = self.small_font.render(title.upper(), True, (220, 230, 255))
+        # Center title vertically in header
+        screen.blit(title_surf, (x + 28, y + (header_h - title_surf.get_height()) // 2 + 1))
+        
+        # Toggle Button
+        toggle_rect = pygame.Rect(x + 6, y + 6, 16, 16)
+        self.toggle_buttons[panel_name] = toggle_rect
+        
+        # Draw toggle icon (triangle)
+        center_x = toggle_rect.centerx
+        center_y = toggle_rect.centery
+        
+        # Icon color
+        icon_color = (150, 200, 255)
+        
+        if is_expanded:
+            # Down arrow
+            points = [(center_x - 4, center_y - 2), (center_x + 4, center_y - 2), (center_x, center_y + 3)]
+        else:
+            # Right arrow
+            points = [(center_x - 2, center_y - 4), (center_x - 2, center_y + 4), (center_x + 3, center_y)]
+            
+        pygame.draw.polygon(screen, icon_color, points)
+        
+        return is_expanded
 
     def _render_weather_panel(self, screen: pygame.Surface, battle: SpatialBattle):
         """
         Render weather and time information in the top left.
-        
-        Displays:
-        - Weather Type
-        - Temperature & Humidity
-        - Time of Day
         """
         if not battle.environment:
             return
             
-        # Position in top left (over the top bar background)
-        x = 20
-        y = 15
+        x, y = 20, 50 # Moved down slightly to clear toolbar
+        width, height = 220, 80
+        
+        if not self._render_panel_container(screen, x, y, width, height, "Environment", "weather"):
+            return
+            
+        # Content Offset
+        content_y = y + 30
+        content_x = x + 10
         
         # Get data
         env = battle.environment
@@ -375,220 +677,145 @@ class UIComponents:
             
         # Weather Type
         w_type = weather.weather_type.value.title()
-        # Color based on weather
         w_color = (200, 200, 255)
         if w_type == "Clear": w_color = (255, 255, 200)
         elif w_type == "Rainy": w_color = (150, 150, 255)
-        elif w_type == "Stormy": w_color = (100, 100, 200)
-        elif w_type == "Drought": w_color = (255, 200, 150)
-        elif w_type == "Foggy": w_color = (200, 200, 200)
         
-        # Draw Weather Type
         type_surf = self._get_cached_text(f"Weather: {w_type}", self.text_font, w_color)
-        screen.blit(type_surf, (x, y))
+        screen.blit(type_surf, (content_x, content_y))
         
-        # Temperature & Humidity
-        y += 22
-        temp_text = f"Temp: {weather.temperature:.1f}°C"
+        # Temp & Humidity
+        content_y += 22
+        temp_text = f"{weather.temperature:.1f}°C | {weather.humidity*100:.0f}% Hum"
         temp_surf = self._get_cached_text(temp_text, self.small_font, self.text_color)
-        screen.blit(temp_surf, (x, y))
+        screen.blit(temp_surf, (content_x, content_y))
         
-        # Humidity
-        hum_text = f"Humidity: {weather.humidity*100:.0f}%"
-        hum_surf = self._get_cached_text(hum_text, self.small_font, self.text_color)
-        screen.blit(hum_surf, (x + 100, y))
-        
-        # Time of Day
-        y += 18
+        # Time
+        content_y += 18
         if day_night:
-            time_phase = day_night.get_time_of_day().value.title()
             hour = day_night.get_current_hour()
             time_str = f"{int(hour):02d}:{int((hour%1)*60):02d}"
-            
-            time_text = f"Time: {time_str} ({time_phase})"
-            time_surf = self._get_cached_text(time_text, self.small_font, (255, 255, 200))
-            screen.blit(time_surf, (x, y))
+            time_surf = self._get_cached_text(f"Time: {time_str}", self.small_font, (255, 255, 200))
+            screen.blit(time_surf, (content_x, content_y))
 
     def _render_biome_panel(self, screen: pygame.Surface, battle: SpatialBattle):
         """
         Render biome information panel below the weather panel.
-        
-        Displays:
-        - Biome Name (or Region Name if multi-biome)
-        - Difficulty Rating
-        - Biome Description
-        - Mini-map of regions
         """
         if not battle.environment:
             return
             
-        env = battle.environment
-        
-        # Position below weather panel
-        panel_x = 20
-        panel_y = 100
-        panel_width = 220
-        panel_height = 180  # Increased height for map
-        
-        # Background for the whole panel area
-        # pygame.draw.rect(screen, (30, 30, 40, 180), (panel_x - 5, panel_y - 5, panel_width + 10, panel_height + 10), border_radius=5)
-        
-        # Determine what to show (Global biome or specific region)
-        biome_name = env.biome_name
-        description = env.biome_description
-        difficulty = env.biome_difficulty
-        is_region_hovered = False
-        
-        # Mini-map area
-        map_size = 80
-        map_x = panel_x
-        map_y = panel_y + 75
-        map_rect = pygame.Rect(map_x, map_y, map_size, map_size)
-        
-        # Check for region hover in multi-biome setup via mini-map
-        mouse_pos = pygame.mouse.get_pos()
-        mx, my = mouse_pos
-        
-        hovered_region = None
-        
-        # Draw Mini-map
-        pygame.draw.rect(screen, (0, 0, 0), map_rect)  # Map background
-        pygame.draw.rect(screen, (100, 100, 100), map_rect, 1)  # Map border
-        
-        if hasattr(env, 'biome_regions') and env.biome_regions:
-            # Draw regions
-            for region in env.biome_regions:
-                # Scale region bounds to map size
-                # Region bounds are in world coordinates (0 to env.width)
-                # Map is map_size x map_size
-                
-                rx = map_x + (region.bounds[0] / env.width) * map_size
-                ry = map_y + (region.bounds[1] / env.height) * map_size
-                rw = (region.bounds[2] / env.width) * map_size
-                rh = (region.bounds[3] / env.height) * map_size
-                
-                region_rect = pygame.Rect(rx, ry, rw, rh)
-                
-                # Color based on biome type
-                b_type = region.biome_type.value
-                color = (100, 100, 100)
-                if b_type == "grassland": color = (100, 200, 100)
-                elif b_type == "forest": color = (34, 139, 34)
-                elif b_type == "desert": color = (238, 214, 175)
-                elif b_type == "marsh": color = (47, 79, 79)
-                elif b_type == "rocky_highlands": color = (139, 69, 19)
-                
-                pygame.draw.rect(screen, color, region_rect)
-                pygame.draw.rect(screen, (50, 50, 50), region_rect, 1) # Grid lines
-                
-                # Check hover
-                if region_rect.collidepoint(mx, my):
-                    hovered_region = region
-                    # Highlight
-                    pygame.draw.rect(screen, (255, 255, 255), region_rect, 2)
-        else:
-            # Single biome - fill map
-            color = (100, 100, 100)
-            # Try to guess color from name if simple biome
-            b_name = env.biome_name.lower()
-            if "grass" in b_name: color = (100, 200, 100)
-            elif "forest" in b_name: color = (34, 139, 34)
-            elif "desert" in b_name: color = (238, 214, 175)
-            elif "marsh" in b_name: color = (47, 79, 79)
-            elif "rocky" in b_name: color = (139, 69, 19)
-            
-            pygame.draw.rect(screen, color, map_rect)
-            
-            if map_rect.collidepoint(mx, my):
-                pygame.draw.rect(screen, (255, 255, 255), map_rect, 2)
+        # Position in Top Right (aligned with top margin)
+        panel_width = 230
+        margin_from_edge = 10
+        x = screen.get_width() - panel_width - margin_from_edge
+        y = 10
 
-        # Update info if hovering a region
-        if hovered_region:
-            biome_name = hovered_region.biome_config.name
-            description = hovered_region.biome_config.description
-            difficulty = hovered_region.biome_config.difficulty
-            is_region_hovered = True
-            
-        # Render Text Info
+        # Increased height for mini-map
+        width, height = 220, 220 
         
-        # Color based on difficulty
-        if difficulty <= 2:
-            biome_color = (150, 255, 150)  # Green - easy
-        elif difficulty <= 3:
-            biome_color = (255, 255, 150)  # Yellow - medium
-        else:
-            biome_color = (255, 150, 150)  # Red - hard
+        if not self._render_panel_container(screen, x, y, width, height, "Biome Data", "biome"):
+            return
             
-        if is_region_hovered:
-            # Add a highlight effect for region info text area
-            # pygame.draw.rect(screen, (40, 40, 50), (panel_x-5, panel_y-5, 220, 75), 0, 5)
+        content_y = y + 30
+        content_x = x + 10
+        
+        # Biome Info
+        # Get biome name from environment
+        if hasattr(battle.environment, 'biome_name'):
+            biome_name = battle.environment.biome_name
+        elif hasattr(battle.environment, 'biome_type'):
+            biome_name = str(battle.environment.biome_type)
+        else:
+            biome_name = "Unknown"
+            
+        name_surf = self._get_cached_text(f"Biome: {biome_name}", self.text_font, (150, 255, 150))
+        screen.blit(name_surf, (content_x, content_y))
+        
+        # Difficulty
+        content_y += 25
+        if hasattr(battle.environment, 'difficulty_rating'):
+            diff = battle.environment.difficulty_rating
+        elif hasattr(battle.environment, 'biome_difficulty'):
+            diff = battle.environment.biome_difficulty
+        else:
+            diff = 5.0
+            
+        diff_surf = self._get_cached_text(f"Difficulty: {diff:.1f}/10", self.small_font, (255, 200, 200))
+        screen.blit(diff_surf, (content_x, content_y))
+        
+        # Resources
+        content_y += 20
+        res_count = len(battle.arena.resources)
+        res_surf = self._get_cached_text(f"Resources: {res_count}", self.small_font, (200, 255, 200))
+        screen.blit(res_surf, (content_x, content_y))
+        
+        # Mini-map
+        content_y += 25
+        map_size = 140
+        map_x = x + (width - map_size) // 2
+        map_y = content_y
+        
+        # Draw map background
+        pygame.draw.rect(screen, (0, 0, 0), (map_x, map_y, map_size, map_size))
+        pygame.draw.rect(screen, (100, 100, 100), (map_x-1, map_y-1, map_size+2, map_size+2), 1)
+        
+        if battle.environment.terrain_grid:
+            from ..models.environment import TerrainType
+            colors = {
+                TerrainType.GRASS: (34, 139, 34),
+                TerrainType.ROCKY: (128, 128, 128),
+                TerrainType.WATER: (65, 105, 225),
+                TerrainType.FOREST: (0, 100, 0),
+                TerrainType.DESERT: (210, 180, 140),
+                TerrainType.MARSH: (47, 79, 79)
+            }
+            
+            # Calculate scale
+            arena_w = battle.arena.width
+            arena_h = battle.arena.height
+            scale_x = map_size / arena_w
+            scale_y = map_size / arena_h
+            
+            cell_size = battle.environment.cell_size
+            pixel_w = max(1, int(cell_size * scale_x))
+            pixel_h = max(1, int(cell_size * scale_y))
+            
+            # Draw terrain cells
+            for (col, row), cell in battle.environment.terrain_grid.items():
+                cx = map_x + int(cell.position.x * scale_x)
+                cy = map_y + int(cell.position.y * scale_y)
+                
+                color = colors.get(cell.terrain_type, (50, 50, 50))
+                pygame.draw.rect(screen, color, (cx, cy, pixel_w, pixel_h))
+                
+            # Draw camera viewport rect
+            # We need camera info here, but UI render method usually has access to it?
+            # The render signature is: render(self, screen, battle, paused, scientific_cursor=None)
+            # It doesn't have camera! We need to pass camera to render if we want this.
+            # For now, skip viewport rect or find a way to get it.
+            # Actually, we can't easily get camera here without changing signature.
+            # Let's skip viewport rect for now to avoid breaking API.
             pass
-        
-        # Name
-        name_surf = self._get_cached_text(f"{biome_name}", self.text_font, biome_color)
-        screen.blit(name_surf, (panel_x, panel_y))
-        
-        # Difficulty rating with stars
-        y_text = panel_y + 22
-        diff_text = f"Difficulty: "
-        diff_surf = self._get_cached_text(diff_text, self.small_font, self.text_color)
-        screen.blit(diff_surf, (panel_x, y_text))
-        
-        # Draw stars
-        star_x = panel_x + diff_surf.get_width() + 2
-        for i in range(5):
-            if i < difficulty:
-                star_color = (255, 200, 50)  # Filled star
-            else:
-                star_color = (80, 80, 80)  # Empty star
-            star_surf = self._get_cached_text("★", self.small_font, star_color)
-            screen.blit(star_surf, (star_x + i * 14, y_text))
-        
-        # Description (truncated if too long)
-        y_text += 18
-        if description and len(description) > 60:
-            description = description[:57] + "..."
-        
-        # Wrap description text
-        words = description.split(' ')
-        lines = []
-        current_line = []
-        for word in words:
-            current_line.append(word)
-            test_line = ' '.join(current_line)
-            if self.small_font.size(test_line)[0] > panel_width:
-                current_line.pop()
-                lines.append(' '.join(current_line))
-                current_line = [word]
-        lines.append(' '.join(current_line))
-        
-        for i, line in enumerate(lines[:2]): # Show max 2 lines
-            desc_surf = self._get_cached_text(line, self.small_font, (180, 180, 180))
-            screen.blit(desc_surf, (panel_x, y_text + i * 14))
 
-        # Map Label
-        map_label = self._get_cached_text("Region Map", self.small_font, (150, 150, 150))
-        screen.blit(map_label, (map_x, map_y - 14))
-    
     def _render_genetic_strains_panel(
         self,
         screen: pygame.Surface,
         battle: SpatialBattle
     ):
         """
-        Render a genetic family panel showing population by strain.
+        Render a panel showing population by genetic strain OR disease strain.
         
         Positioned in the left margin, below the biome panel.
-        
-        Args:
-            screen: Pygame surface to draw on
-            battle: The spatial battle
         """
         panel_width = 230
         
-        # Dynamic height calculation
+        # Dynamic Y position based on Weather panel only (Biome moved to right)
+        weather_expanded = self.panel_states.get('weather', True)
+        weather_h = 80 if weather_expanded else 28
+        
         margin_from_edge = 10
-        panel_y = 300  # Start below biome panel
+        panel_y = 50 + weather_h + 10
         
         # Battle feed height is 190, plus 5px margin from bottom
         bottom_margin = 200 
@@ -601,33 +828,127 @@ class UIComponents:
         # Position in left margin area
         panel_x = margin_from_edge
         
-        # Update panel rect for input handling
+        # Update panel rect for input handling (used for scrolling)
+        # Note: This rect covers the whole area, but we only care if expanded
         self.strain_panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
         
-        # Panel background
-        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-        pygame.draw.rect(
-            panel_surface,
-            self.panel_bg,
-            pygame.Rect(0, 0, panel_width, panel_height),
-            border_radius=8
-        )
-        screen.blit(panel_surface, (panel_x, panel_y))
+        if not self._render_panel_container(screen, panel_x, panel_y, panel_width, panel_height, "Populations", "genetic"):
+            # If collapsed, we don't render tabs or content
+            # But we should clear interactive rects that might be stale
+            self.strain_tab_rects = {}
+            self.strain_item_rects = {}
+            return
         
-        # Header
-        header_text = "GENETIC STRAINS"
-        header_surface = self._get_cached_text(header_text, self.text_font, self.text_color)
-        header_rect = header_surface.get_rect(centerx=panel_width // 2, top=10)
-        screen.blit(header_surface, (panel_x + header_rect.x, panel_y + header_rect.y))
+        # --- TABS ---
+        # Offset content by header height
+        header_h = 25
+        tab_y = panel_y + header_h + 5
         
+        tab_height = 30
+        tab_width = panel_width // 4  # Changed to 4 tabs for NEURAL
+        
+        # Genetic Tab
+        gen_tab_rect = pygame.Rect(panel_x, tab_y, tab_width, tab_height)
+        self.strain_tab_rects["GENETIC"] = gen_tab_rect
+        gen_color = (60, 60, 80) if self.strain_panel_mode == "GENETIC" else (40, 40, 50)
+        pygame.draw.rect(screen, gen_color, gen_tab_rect, border_top_left_radius=8)
+        
+        gen_text = self.small_font.render("GENES", True, (200, 200, 255) if self.strain_panel_mode == "GENETIC" else (150, 150, 150))
+        screen.blit(gen_text, (gen_tab_rect.centerx - gen_text.get_width()//2, gen_tab_rect.centery - gen_text.get_height()//2))
+        
+        # Disease Tab
+        dis_tab_rect = pygame.Rect(panel_x + tab_width, tab_y, tab_width, tab_height)
+        self.strain_tab_rects["DISEASE"] = dis_tab_rect
+        dis_color = (80, 40, 40) if self.strain_panel_mode == "DISEASE" else (50, 30, 30)
+        pygame.draw.rect(screen, dis_color, dis_tab_rect)
+        
+        dis_text = self.small_font.render("VIRUS", True, (255, 150, 150) if self.strain_panel_mode == "DISEASE" else (150, 100, 100))
+        screen.blit(dis_text, (dis_tab_rect.centerx - dis_text.get_width()//2, dis_tab_rect.centery - dis_text.get_height()//2))
+
+        # Pellet Tab
+        pel_tab_rect = pygame.Rect(panel_x + tab_width * 2, tab_y, tab_width, tab_height)
+        self.strain_tab_rects["PELLETS"] = pel_tab_rect
+        pel_color = (40, 80, 40) if self.strain_panel_mode == "PELLETS" else (30, 50, 30)
+        pygame.draw.rect(screen, pel_color, pel_tab_rect, border_top_right_radius=8)
+        
+        pel_text = self.small_font.render("FOOD", True, (150, 255, 150) if self.strain_panel_mode == "PELLETS" else (100, 150, 100))
+        screen.blit(pel_text, (pel_tab_rect.centerx - pel_text.get_width()//2, pel_tab_rect.centery - pel_text.get_height()//2))
+        
+        # Neural Tab (NEW)
+        neu_tab_rect = pygame.Rect(panel_x + tab_width * 3, tab_y, tab_width, tab_height)
+        self.strain_tab_rects["NEURAL"] = neu_tab_rect
+        neu_color = (40, 60, 80) if self.strain_panel_mode == "NEURAL" else (30, 40, 50)
+        pygame.draw.rect(screen, neu_color, neu_tab_rect, border_top_right_radius=8)
+        
+        neu_text = self.small_font.render("BRAIN", True, (150, 200, 255) if self.strain_panel_mode == "NEURAL" else (100, 130, 150))
+        screen.blit(neu_text, (neu_tab_rect.centerx - neu_text.get_width()//2, neu_tab_rect.centery - neu_text.get_height()//2))
+        
+        # Highlight active tab bottom
+        if self.strain_panel_mode == "GENETIC":
+            pygame.draw.line(screen, (100, 100, 255), gen_tab_rect.bottomleft, gen_tab_rect.bottomright, 2)
+        elif self.strain_panel_mode == "DISEASE":
+            pygame.draw.line(screen, (255, 100, 100), dis_tab_rect.bottomleft, dis_tab_rect.bottomright, 2)
+        else:
+            pygame.draw.line(screen, (100, 255, 100), pel_tab_rect.bottomleft, pel_tab_rect.bottomright, 2)
+
         # Content area definition
-        content_y_start = panel_y + 40
-        content_height = panel_height - 50 # Reserve space for header and footer
+        content_y_start = tab_y + tab_height + 10
+        content_height = panel_height - header_h - 5 - tab_height - 35 # Reserve space for footer
         content_rect = pygame.Rect(panel_x, content_y_start, panel_width, content_height)
         
         # Clip rendering to content area
         original_clip = screen.get_clip()
         screen.set_clip(content_rect)
+        
+        # Clear item rects for this frame
+        self.strain_item_rects = {}
+        
+        if self.strain_panel_mode == "GENETIC":
+            self._render_genetic_list(screen, battle, panel_x, content_y_start, content_height, content_rect)
+        elif self.strain_panel_mode == "DISEASE":
+            self._render_disease_list(screen, battle, panel_x, content_y_start, content_height, content_rect)
+        elif self.strain_panel_mode == "PELLETS":
+            self._render_pellet_list(screen, battle, panel_x, content_y_start, content_height, content_rect)
+        else:  # NEURAL
+            self._render_neural_patterns(screen, battle, panel_x, content_y_start, content_height, content_rect)
+            
+        # Restore clip
+        screen.set_clip(original_clip)
+        
+        # Footer (Total Count)
+        footer_y = panel_y + panel_height - 25
+        if self.strain_panel_mode == "GENETIC":
+            total_alive = sum(1 for c in battle.creatures if c.is_alive())
+            total_text = f"Total Alive: {total_alive}/{len(battle.creatures)}"
+            color = (200, 255, 200)
+        elif self.strain_panel_mode == "DISEASE":
+            infected_count = sum(1 for c in battle.creatures if c.is_alive() and c.creature.active_infection)
+            total_text = f"Total Infected: {infected_count}"
+            color = (255, 150, 150)
+        elif self.strain_panel_mode == "PELLETS":
+            total_pellets = len(battle.arena.pellets)
+            total_text = f"Total Pellets: {total_pellets}"
+            color = (150, 255, 150)
+        else:  # NEURAL
+            brain_count = sum(1 for c in battle.creatures if c.is_alive() and hasattr(c.creature, 'brain') and c.creature.brain)
+            total_text = f"Total Brains: {brain_count}"
+            color = (150, 200, 255)
+            
+        total_surface = self.small_font.render(total_text, True, color)
+        screen.blit(total_surface, (panel_x + 10, footer_y))
+        
+        # Render Details Popup if a strain is selected
+        if self.selected_strain_id:
+            if self.strain_panel_mode == "GENETIC":
+                self._render_strain_details_popup(screen, battle)
+            elif self.strain_panel_mode == "DISEASE":
+                self._render_disease_details_popup(screen, battle)
+            elif self.strain_panel_mode == "PELLETS":
+                self._render_pellet_details_popup(screen, battle)
+    
+    def _render_genetic_list(self, screen, battle, panel_x, content_y_start, content_height, content_rect):
+        """Render the list of genetic strains."""
+        panel_width = 230
         
         # Group creatures by strain
         strain_groups = {}
@@ -652,9 +973,6 @@ class UIComponents:
         # Clamp scroll offset
         max_scroll = max(0, total_content_height - content_height)
         self.strain_scroll_offset = max(0, min(self.strain_scroll_offset, max_scroll))
-        
-        # Clear item rects for this frame
-        self.strain_item_rects = {}
         
         current_y = content_y_start - self.strain_scroll_offset
         
@@ -684,7 +1002,6 @@ class UIComponents:
             item_rect = pygame.Rect(panel_x + 5, current_y, panel_width - 10, item_height - 2)
             
             # Store rect for click detection (screen coordinates)
-            # Only store if visible
             if content_rect.colliderect(item_rect):
                  self.strain_item_rects[strain_id] = item_rect
             
@@ -692,7 +1009,7 @@ class UIComponents:
                 pygame.draw.rect(screen, (60, 60, 80), item_rect, border_radius=4)
                 pygame.draw.rect(screen, strain_color, item_rect, 1, border_radius=4)
             
-            # Hover effect (optional, requires mouse pos)
+            # Hover effect
             mouse_pos = pygame.mouse.get_pos()
             if item_rect.collidepoint(mouse_pos):
                  pygame.draw.rect(screen, (50, 50, 60), item_rect, border_radius=4)
@@ -707,10 +1024,7 @@ class UIComponents:
             
             # Strain info
             strain_text = f"Strain {strain_id[:6]}"
-            if is_selected:
-                text_color = (255, 255, 200)
-            else:
-                text_color = self.text_color
+            text_color = (255, 255, 200) if is_selected else self.text_color
                 
             text_surface = self.small_font.render(strain_text, True, text_color)
             screen.blit(text_surface, (panel_x + 35, current_y + 4))
@@ -721,34 +1035,331 @@ class UIComponents:
             screen.blit(count_surface, (panel_x + panel_width - 50, current_y + 4))
             
             current_y += item_height
-            
-        # Restore clip
-        screen.set_clip(original_clip)
-        
+
         # Draw Scrollbar if needed
         if total_content_height > content_height:
-            scrollbar_width = 6
-            scrollbar_height = content_height * (content_height / total_content_height)
-            scrollbar_x = panel_x + panel_width - 8
-            
-            # Calculate scrollbar y position
-            scroll_ratio = self.strain_scroll_offset / max_scroll
-            scrollbar_y = content_y_start + scroll_ratio * (content_height - scrollbar_height)
-            
-            pygame.draw.rect(screen, (60, 60, 70), (scrollbar_x, content_y_start, scrollbar_width, content_height), border_radius=3)
-            pygame.draw.rect(screen, (150, 150, 150), (scrollbar_x, scrollbar_y, scrollbar_width, scrollbar_height), border_radius=3)
+            self._render_scrollbar(screen, panel_x, panel_width, content_y_start, content_height, total_content_height)
 
-        # Total alive count footer
-        footer_y = panel_y + panel_height - 25
-        total_alive = sum(1 for c in battle.creatures if c.is_alive())
-        total_text = f"Total Alive: {total_alive}/{len(battle.creatures)}"
-        total_surface = self.small_font.render(total_text, True, (200, 255, 200))
-        screen.blit(total_surface, (panel_x + 10, footer_y))
+    def _render_disease_list(self, screen, battle, panel_x, content_y_start, content_height, content_rect):
+        """Render the list of active disease strains."""
+        panel_width = 230
         
-        # Render Details Popup if a strain is selected
-        if self.selected_strain_id:
-            self._render_strain_details_popup(screen, battle)
-    
+        # Group infections by disease ID
+        disease_groups = {}
+        for creature in battle.creatures:
+            if creature.is_alive() and creature.creature.active_infection:
+                disease = creature.creature.active_infection.disease
+                d_id = disease.disease_id
+                if d_id not in disease_groups:
+                    disease_groups[d_id] = {
+                        'disease': disease,
+                        'count': 0
+                    }
+                disease_groups[d_id]['count'] += 1
+        
+        # Sort by infected count
+        sorted_diseases = sorted(
+            disease_groups.items(),
+            key=lambda x: x[1]['count'],
+            reverse=True
+        )
+        
+        # Calculate total content height
+        item_height = 30 # Taller for disease info
+        total_items = len(sorted_diseases)
+        total_content_height = total_items * item_height
+        
+        # Clamp scroll offset
+        max_scroll = max(0, total_content_height - content_height)
+        self.strain_scroll_offset = max(0, min(self.strain_scroll_offset, max_scroll))
+        
+        current_y = content_y_start - self.strain_scroll_offset
+        
+        for d_id, data in sorted_diseases:
+            disease = data['disease']
+            count = data['count']
+            
+            # Optimization: Skip if completely above or below view
+            if current_y + item_height < content_y_start:
+                current_y += item_height
+                continue
+            if current_y > content_y_start + content_height:
+                break
+            
+            # Highlight if selected
+            is_selected = (d_id == self.selected_strain_id)
+            item_rect = pygame.Rect(panel_x + 5, current_y, panel_width - 10, item_height - 2)
+            
+            # Store rect
+            if content_rect.colliderect(item_rect):
+                 self.strain_item_rects[d_id] = item_rect
+            
+            # Background
+            bg_color = (60, 30, 30) if is_selected else (40, 20, 20)
+            pygame.draw.rect(screen, bg_color, item_rect, border_radius=4)
+            
+            if is_selected:
+                pygame.draw.rect(screen, (255, 100, 100), item_rect, 1, border_radius=4)
+            
+            # Hover effect
+            
+            # Stats Bar (Virulence/Lethality)
+            # Just a visual indicator of how dangerous it is
+            danger_score = (disease.transmission_rate * 10) + (disease.mortality_rate * 20) + (disease.hp_drain_rate * 5)
+            danger_pct = min(1.0, danger_score / 10.0)
+            
+            # Hover effect
+            mouse_pos = pygame.mouse.get_pos()
+            if item_rect.collidepoint(mouse_pos):
+                pygame.draw.rect(screen, (60, 40, 40), item_rect, border_radius=4)
+            
+            # Disease Name
+            disease_name = disease.name if hasattr(disease, 'name') else f"Disease {d_id[:8]}"
+            name_color = (255, 200, 200) if is_selected else (255, 150, 150)
+            name_surface = self.small_font.render(disease_name, True, name_color)
+            screen.blit(name_surface, (panel_x + 10, current_y + 2))
+            
+            # Infected count
+            count_text = f"{count} infected"
+            count_surface = self.small_font.render(count_text, True, (200, 150, 150))
+            screen.blit(count_surface, (panel_x + panel_width - 80, current_y + 2))
+            
+            # Stats Bar (Virulence/Lethality) - visual indicator of danger
+            bar_width = 100
+            bar_height = 4
+            bar_x = panel_x + 10
+            bar_y = current_y + 20
+            
+            pygame.draw.rect(screen, (50, 30, 30), (bar_x, bar_y, bar_width, bar_height))
+            pygame.draw.rect(screen, (255, 50, 50), (bar_x, bar_y, int(bar_width * danger_pct), bar_height))
+            
+            
+            current_y += item_height
+
+        # Draw Scrollbar if needed
+        if total_content_height > content_height:
+            self._render_scrollbar(screen, panel_x, panel_width, content_y_start, content_height, total_content_height)
+
+    def _render_scrollbar(self, screen, panel_x, panel_width, content_y_start, content_height, total_content_height):
+        """Helper to render scrollbar."""
+        max_scroll = max(0, total_content_height - content_height)
+        scrollbar_width = 6
+        scrollbar_height = content_height * (content_height / total_content_height)
+        scrollbar_x = panel_x + panel_width - 8
+        
+        # Calculate scrollbar y position
+        scroll_ratio = self.strain_scroll_offset / max_scroll if max_scroll > 0 else 0
+        scrollbar_y = content_y_start + scroll_ratio * (content_height - scrollbar_height)
+        
+        pygame.draw.rect(screen, (60, 60, 70), (scrollbar_x, content_y_start, scrollbar_width, content_height), border_radius=3)
+        pygame.draw.rect(screen, (150, 150, 150), (scrollbar_x, scrollbar_y, scrollbar_width, scrollbar_height), border_radius=3)
+
+    def _render_pellet_list(self, screen, battle, panel_x, content_y_start, content_height, content_rect):
+        """Render the list of pellet strains."""
+        panel_width = 230
+        
+        # Group pellets by strain
+        strain_groups = {}
+        for pellet in battle.arena.pellets:
+            strain_id = getattr(pellet, 'strain_id', 'unknown')
+            if strain_id not in strain_groups:
+                strain_groups[strain_id] = []
+            strain_groups[strain_id].append(pellet)
+        
+        # Sort by population size
+        sorted_strains = sorted(
+            strain_groups.items(),
+            key=lambda x: len(x[1]),
+            reverse=True
+        )
+        
+        # Calculate total content height
+        item_height = 24
+        total_items = len(sorted_strains)
+        total_content_height = total_items * item_height
+        
+        # Clamp scroll offset
+        max_scroll = max(0, total_content_height - content_height)
+        self.strain_scroll_offset = max(0, min(self.strain_scroll_offset, max_scroll))
+        
+        current_y = content_y_start - self.strain_scroll_offset
+        
+        for strain_id, pellets in sorted_strains:
+            # Optimization: Skip if completely above or below view
+            if current_y + item_height < content_y_start:
+                current_y += item_height
+                continue
+            if current_y > content_y_start + content_height:
+                break
+                
+            count = len(pellets)
+            
+            # Calculate average stats
+            avg_nutrition = sum(p.traits.nutritional_value for p in pellets) / count
+            avg_growth = sum(p.traits.growth_rate for p in pellets) / count
+            
+            # Determine display color (average of pellets)
+            r = sum(p.traits.color[0] for p in pellets) // count
+            g = sum(p.traits.color[1] for p in pellets) // count
+            b = sum(p.traits.color[2] for p in pellets) // count
+            strain_color = (r, g, b)
+            
+            # Highlight if selected
+            is_selected = (strain_id == self.selected_strain_id)
+            item_rect = pygame.Rect(panel_x + 5, current_y, panel_width - 10, item_height - 2)
+            
+            # Store rect for click detection
+            if content_rect.colliderect(item_rect):
+                 self.strain_item_rects[strain_id] = item_rect
+            
+            if is_selected:
+                pygame.draw.rect(screen, (40, 60, 40), item_rect, border_radius=4)
+                pygame.draw.rect(screen, strain_color, item_rect, 1, border_radius=4)
+            
+            # Hover effect
+            mouse_pos = pygame.mouse.get_pos()
+            if item_rect.collidepoint(mouse_pos):
+                 pygame.draw.rect(screen, (30, 50, 30), item_rect, border_radius=4)
+
+            # Draw color indicator
+            pygame.draw.circle(
+                screen,
+                strain_color,
+                (panel_x + 15, current_y + item_height//2),
+                6
+            )
+            
+            # Draw Text
+            # Name based on generation/stats
+            gen = pellets[0].generation if pellets else 0
+            name = f"Strain G{gen}"
+            
+            text_surf = self.small_font.render(name, True, (200, 255, 200))
+            screen.blit(text_surf, (panel_x + 30, current_y + 4))
+            
+            # Count
+            count_text = f"{count}"
+            count_surf = self.small_font.render(count_text, True, (150, 150, 150))
+            screen.blit(count_surf, (panel_x + panel_width - 30 - count_surf.get_width(), current_y + 4))
+            
+            # Nutrition bar (mini)
+            bar_width = 40
+            bar_height = 4
+            bar_x = panel_x + panel_width - 80
+            bar_y = current_y + 14
+            
+            # Nutrition (Green)
+            nut_pct = min(1.0, avg_nutrition / 100.0)
+            pygame.draw.rect(screen, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
+            pygame.draw.rect(screen, (100, 255, 100), (bar_x, bar_y, bar_width * nut_pct, bar_height))
+            
+            current_y += item_height
+            
+        # Draw scrollbar if needed
+        if total_content_height > content_height:
+            self._render_scrollbar(screen, panel_x, panel_width, content_y_start, content_height, total_content_height)
+
+    def _render_neural_patterns(self, screen, battle, panel_x, content_y_start, content_height, content_rect):
+        """Render neural network population statistics."""
+        panel_width = 230
+        
+        # Get brain statistics
+        if not hasattr(battle, 'brain_stats'):
+            # Brain stats system not initialized
+            no_data_text = "Brain stats not initialized"
+            surf = self.small_font.render(no_data_text, True, (255, 100, 100))
+            screen.blit(surf, (panel_x + 10, content_y_start + 10))
+            return
+            
+        if not battle.brain_stats.last_analysis:
+            # No data yet - waiting for first analysis
+            no_data_text = "Analyzing brains..."
+            surf = self.small_font.render(no_data_text, True, (150, 150, 150))
+            screen.blit(surf, (panel_x + 10, content_y_start + 10))
+            
+            # Show time until next analysis
+            time_left = 2.0 - (battle.current_time - battle.last_brain_analysis)
+            if time_left > 0:
+                time_text = f"Next update in {time_left:.1f}s"
+                time_surf = self.small_font.render(time_text, True, (100, 100, 100))
+                screen.blit(time_surf, (panel_x + 10, content_y_start + 30))
+            return
+        
+        stats = battle.brain_stats.last_analysis
+        
+        y = content_y_start
+        x = panel_x + 10
+        
+        # Brain count
+        brain_text = f"Brains: {stats['total_brains']}"
+        surf = self.small_font.render(brain_text, True, (150, 200, 255))
+        screen.blit(surf, (x, y))
+        y += 25
+        
+        # Popular Strategies (bar charts)
+        strategies_title = "POPULAR STRATEGIES"
+        title_surf = self.small_font.render(strategies_title, True, (100, 150, 255))
+        screen.blit(title_surf, (x, y))
+        y += 20
+        
+        for strategy in stats['popular_strategies']:
+            action = strategy['action']
+            pct = strategy['percentage']
+            
+            # Action name
+            action_surf = self.small_font.render(action, True, (200, 200, 200))
+            screen.blit(action_surf, (x, y))
+            
+            # Bar
+            bar_x = x + 60
+            bar_width = 120
+            bar_height = 10
+            
+            # Background
+            pygame.draw.rect(screen, (30, 30, 40), (bar_x, y + 2, bar_width, bar_height))
+            
+            # Fill
+            fill_width = int(bar_width * pct)
+            bar_color = (100, 150, 255)
+            if action == 'EAT': bar_color = (100, 255, 100)
+            elif action == 'FLEE': bar_color = (255, 200, 100)
+            elif action == 'FIGHT': bar_color = (255, 100, 100)
+            
+            pygame.draw.rect(screen, bar_color, (bar_x, y + 2, fill_width, bar_height))
+            
+            # Percentage
+            pct_text = f"{int(pct*100)}%"
+            pct_surf = self.small_font.render(pct_text, True, (150, 150, 150))
+            screen.blit(pct_surf, (bar_x + bar_width + 5, y))
+            
+            y += 18
+        
+        y += 10
+        
+        # Brain Statistics
+        stats_title = "BRAIN STATS"
+        title_surf = self.small_font.render(stats_title, True, (255, 200, 100))
+        screen.blit(title_surf, (x, y))
+        y += 20
+        
+        # Learning rate
+        lr_text = f"Avg Learning: {stats['avg_learning_rate']:.2f}"
+        surf = self.small_font.render(lr_text, True, (200, 200, 200))
+        screen.blit(surf, (x, y))
+        y += 18
+        
+        # Diversity
+        div_text = f"Diversity: {int(stats['brain_diversity']*100)}%"
+        surf = self.small_font.render(div_text, True, (200, 200, 200))
+        screen.blit(surf, (x, y))
+        y += 18
+        
+        # Intelligent count
+        int_text = f"Intelligent: {stats['intelligent_count']}"
+        surf = self.small_font.render(int_text, True, (200, 200, 200))
+        screen.blit(surf, (x, y))
+
+
     def _render_strain_details_popup(self, screen: pygame.Surface, battle: SpatialBattle):
         """
         Render detailed information popup for the selected strain.
@@ -840,13 +1451,23 @@ class UIComponents:
         
         # Divider
         pygame.draw.line(screen, (80, 100, 120), (x, y), (popup_x + popup_width - 20, y), 1)
-        y += 15
+        y += 10
+        
+        # --- Scrollable Content Area ---
+        content_rect = pygame.Rect(x, y, popup_width - 40, 350)
+        # Clip to content area
+        original_clip = screen.get_clip()
+        screen.set_clip(content_rect)
+        
+        # Start drawing content at offset
+        content_y = y - self.popup_scroll_offset
+        start_y = content_y # To calculate total height later
         
         # Population Statistics
         section_title = "POPULATION"
         title_surf = self._get_cached_text(section_title, self.text_font, (100, 255, 150))
-        screen.blit(title_surf, (x, y))
-        y += 25
+        screen.blit(title_surf, (x, content_y))
+        content_y += 25
         
         stats = [
             f"Alive: {len(alive)} / {total}",
@@ -856,16 +1477,16 @@ class UIComponents:
         
         for stat in stats:
             stat_surf = self._get_cached_text(stat, self.small_font, (200, 200, 200))
-            screen.blit(stat_surf, (x + 10, y))
-            y += 20
+            screen.blit(stat_surf, (x + 10, content_y))
+            content_y += 20
         
-        y += 10
+        content_y += 10
         
         # Lineage Information
         section_title = "LINEAGE"
         title_surf = self._get_cached_text(section_title, self.text_font, (255, 200, 100))
-        screen.blit(title_surf, (x, y))
-        y += 25
+        screen.blit(title_surf, (x, content_y))
+        content_y += 25
         
         lineage_stats = [
             f"Generation Depth: {gen_depth}",
@@ -876,70 +1497,319 @@ class UIComponents:
         
         for stat in lineage_stats:
             stat_surf = self._get_cached_text(stat, self.small_font, (200, 200, 200))
-            screen.blit(stat_surf, (x + 10, y))
-            y += 20
+            screen.blit(stat_surf, (x + 10, content_y))
+            content_y += 20
         
-        y += 10
+        content_y += 10
+        
+        # Detailed Stats (New)
+        if alive:
+            section_title = "AVERAGE STATS"
+            title_surf = self._get_cached_text(section_title, self.text_font, (100, 200, 255))
+            screen.blit(title_surf, (x, content_y))
+            content_y += 25
+            
+            avg_hp = sum(c.creature.stats.max_hp for c in alive) / len(alive)
+            avg_speed = sum(c.creature.stats.speed for c in alive) / len(alive)
+            avg_size = sum(c.spatial.radius for c in alive) / len(alive)
+            avg_attack = sum(c.creature.stats.attack for c in alive) / len(alive)
+            
+            detailed_stats = [
+                f"Max HP: {avg_hp:.1f}",
+                f"Speed: {avg_speed:.1f}",
+                f"Size: {avg_size:.2f}",
+                f"Attack: {avg_attack:.1f}"
+            ]
+            
+            for stat in detailed_stats:
+                stat_surf = self._get_cached_text(stat, self.small_font, (200, 200, 200))
+                screen.blit(stat_surf, (x + 10, content_y))
+                content_y += 20
+            
+            content_y += 10
         
         # Common Traits
         if common_traits and alive:
             section_title = "COMMON TRAITS"
             title_surf = self._get_cached_text(section_title, self.text_font, (255, 150, 255))
-            screen.blit(title_surf, (x, y))
-            y += 25
+            screen.blit(title_surf, (x, content_y))
+            content_y += 25
             
             for trait, count in common_traits:
                 pct = int((count / len(alive)) * 100)
-                trait_text = f"• {trait}"
-                trait_surf = self._get_cached_text(trait_text, self.small_font, (220, 220, 220))
-                screen.blit(trait_surf, (x + 10, y))
+                trait_text = f"{trait} ({pct}%)"
+                self._draw_text(screen, trait_text, x + 10, content_y, (220, 220, 220))
+                content_y += 20
                 
-                # Percentage bar
-                bar_x = x + 250
-                bar_y = y + 5
-                bar_width = 100
-                bar_height = 10
-                
-                pygame.draw.rect(screen, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
-                pygame.draw.rect(screen, (100, 200, 255), (bar_x, bar_y, bar_width * (pct / 100), bar_height))
-                
-                pct_text = f"{pct}%"
-                pct_surf = self._get_cached_text(pct_text, self.small_font, (150, 150, 150))
-                screen.blit(pct_surf, (bar_x + bar_width + 10, y))
-                
-                y += 22
+        content_y += 20
+        
+        # Actions Section
+        section_title = "ACTIONS"
+        title_surf = self._get_cached_text(section_title, self.text_font, (255, 100, 100))
+        screen.blit(title_surf, (x, content_y))
+        content_y += 30
+        
+        # Action Buttons
+        self._popup_button_rects = {}
+        
+        # Cull Button
+        cull_rect = pygame.Rect(x + 10, content_y, 140, 30)
+        # Store rect relative to screen, but check visibility
+        if content_rect.colliderect(cull_rect):
+            self._popup_button_rects["cull"] = cull_rect
+            
+            # Draw button
+            mouse_pos = pygame.mouse.get_pos()
+            color = (150, 50, 50) if cull_rect.collidepoint(mouse_pos) else (100, 30, 30)
+            pygame.draw.rect(screen, color, cull_rect, border_radius=5)
+            pygame.draw.rect(screen, (200, 50, 50), cull_rect, 1, border_radius=5)
+            
+            btn_text = self.small_font.render("Cull 50%", True, (255, 200, 200))
+            screen.blit(btn_text, (cull_rect.centerx - btn_text.get_width()//2, cull_rect.centery - btn_text.get_height()//2))
+            
+        # Boost Button
+        boost_rect = pygame.Rect(x + 170, content_y, 140, 30)
+        if content_rect.colliderect(boost_rect):
+            self._popup_button_rects["boost"] = boost_rect
+            
+            # Draw button
+            mouse_pos = pygame.mouse.get_pos()
+            color = (50, 150, 50) if boost_rect.collidepoint(mouse_pos) else (30, 100, 30)
+            pygame.draw.rect(screen, color, boost_rect, border_radius=5)
+            pygame.draw.rect(screen, (50, 200, 50), boost_rect, 1, border_radius=5)
+            
+            btn_text = self.small_font.render("Boost Fertility", True, (200, 255, 200))
+            screen.blit(btn_text, (boost_rect.centerx - btn_text.get_width()//2, boost_rect.centery - btn_text.get_height()//2))
+            
+        content_y += 40
+        
+        # Calculate total height for scrolling
+        self._popup_content_height = content_y - start_y
+        
+        # Restore clip
+        screen.set_clip(original_clip)
+        
+        # Draw Scrollbar if needed
+        if self._popup_content_height > content_rect.height:
+            scrollbar_width = 6
+            scrollbar_height = content_rect.height * (content_rect.height / self._popup_content_height)
+            scrollbar_x = x + content_rect.width - 8
+            
+            max_scroll = self._popup_content_height - content_rect.height
+            scroll_ratio = self.popup_scroll_offset / max_scroll if max_scroll > 0 else 0
+            scrollbar_y = content_rect.y + scroll_ratio * (content_rect.height - scrollbar_height)
+            
+            pygame.draw.rect(screen, (60, 60, 70), (scrollbar_x, content_rect.y, scrollbar_width, content_rect.height), border_radius=3)
+            pygame.draw.rect(screen, (150, 150, 150), (scrollbar_x, scrollbar_y, scrollbar_width, scrollbar_height), border_radius=3)
         
         # Close instruction
-        y = popup_y + popup_height - 40
+        close_text = "Click outside to close"
+        close_surf = self._get_cached_text(close_text, self.small_font, (150, 150, 150))
+        screen.blit(close_surf, (popup_x + (popup_width - close_surf.get_width()) // 2, popup_y + popup_height - 25))
+
+    def _render_disease_details_popup(self, screen: pygame.Surface, battle: SpatialBattle):
+        """Render details for selected disease strain."""
+        if not self.selected_strain_id:
+            return
+            
+        # Find disease instance (any will do as they share static properties, but we need dynamic ones too)
+        # Actually, we need to aggregate stats from all infected creatures
+        infected_creatures = [
+            c for c in battle.creatures 
+            if c.is_alive() and c.creature.active_infection and c.creature.active_infection.disease.disease_id == self.selected_strain_id
+        ]
+        
+        if not infected_creatures:
+            return
+            
+        disease = infected_creatures[0].creature.active_infection.disease
+        
+        # Calculate popup dimensions
+        popup_width = 400
+        popup_height = 450
+        popup_x = (screen.get_width() - popup_width) // 2
+        popup_y = (screen.get_height() - popup_height) // 2
+        
+        # Draw Popup Background
+        self._draw_popup_background(screen, popup_x, popup_y, popup_width, popup_height, (40, 20, 20, 250), (200, 100, 100))
+        
+        x = popup_x + 20
+        y = popup_y + 20
+        
+        # Title
+        title_text = f"Virus: {disease.name}"
+        title_surf = self._get_cached_text(title_text, self.title_font, (255, 100, 100))
+        screen.blit(title_surf, (x, y))
+        y += 40
+        
+        # Stats Section
+        self._draw_section_title(screen, "EPIDEMIOLOGY", x, y, (255, 200, 200))
+        y += 25
+        
+        stats = [
+            f"Active Cases: {len(infected_creatures)}",
+            f"Generation: {getattr(disease, 'generation', 0)}",
+            f"Strain ID: {disease.disease_id[:8]}"
+        ]
+        
+        for stat in stats:
+            self._draw_text(screen, stat, x + 10, y, (220, 220, 220))
+            y += 20
+            
+        y += 15
+        
+        # Traits Section
+        self._draw_section_title(screen, "VIRAL TRAITS", x, y, (255, 150, 150))
+        y += 25
+        
+        traits = [
+            f"Transmission Rate: {disease.transmission_rate:.2f}",
+            f"Virulence (Dmg): {disease.hp_drain_rate:.2f}/sec",
+            f"Lethality (Mortality): {disease.mortality_rate:.3f}",
+            f"Incubation Period: {disease.incubation_time:.1f}s",
+            f"Mutation Chance: {disease.mutation_chance:.2f}"
+        ]
+        
+        for trait in traits:
+            self._draw_text(screen, trait, x + 10, y, (220, 220, 220))
+            y += 20
+            
+        y += 15
+        
+        # Description/Type
+        self._draw_section_title(screen, "PATHOLOGY", x, y, (200, 200, 255))
+        y += 25
+        
+        desc = "A rapidly evolving pathogen." # Placeholder
+        if disease.name == "Plague":
+            desc = "Highly infectious, moderate lethality."
+        elif disease.name == "Wasting Sickness":
+            desc = "Causes rapid energy loss and starvation."
+            
+        self._draw_text(screen, desc, x + 10, y, (200, 200, 200))
+        
+    def _render_pellet_details_popup(self, screen: pygame.Surface, battle: SpatialBattle):
+        """Render details for selected pellet strain."""
+        if not self.selected_strain_id:
+            return
+            
+        # Find pellets
+        strain_pellets = [
+            p for p in battle.arena.pellets
+            if getattr(p, 'strain_id', None) == self.selected_strain_id
+        ]
+        
+        if not strain_pellets:
+            return
+            
+        # Aggregate stats
+        count = len(strain_pellets)
+        avg_nut = sum(p.traits.nutritional_value for p in strain_pellets) / count
+        avg_growth = sum(p.traits.growth_rate for p in strain_pellets) / count
+        avg_tox = sum(p.traits.toxicity for p in strain_pellets) / count
+        
+        # Color
+        r = sum(p.traits.color[0] for p in strain_pellets) // count
+        g = sum(p.traits.color[1] for p in strain_pellets) // count
+        b = sum(p.traits.color[2] for p in strain_pellets) // count
+        strain_color = (r, g, b)
+        
+        # Popup Setup
+        popup_width = 400
+        popup_height = 450
+        popup_x = (screen.get_width() - popup_width) // 2
+        popup_y = (screen.get_height() - popup_height) // 2
+        
+        self._draw_popup_background(screen, popup_x, popup_y, popup_width, popup_height, (20, 40, 20, 250), (100, 200, 100))
+        
+        x = popup_x + 20
+        y = popup_y + 20
+        
+        # Title
+        gen = strain_pellets[0].generation
+        title_text = f"Food Strain G{gen}"
+        title_surf = self._get_cached_text(title_text, self.title_font, strain_color)
+        screen.blit(title_surf, (x, y))
+        y += 40
+        
+        # Stats
+        self._draw_section_title(screen, "POPULATION", x, y, (150, 255, 150))
+        y += 25
+        
+        self._draw_text(screen, f"Total Count: {count}", x + 10, y, (220, 220, 220))
+        y += 20
+        self._draw_text(screen, f"Strain ID: {self.selected_strain_id[:8]}", x + 10, y, (180, 180, 180))
+        y += 25
+        
+        # Traits
+        self._draw_section_title(screen, "NUTRITIONAL PROFILE", x, y, (200, 255, 100))
+        y += 25
+        
+        traits = [
+            (f"Energy Value: {avg_nut:.1f}", avg_nut / 100.0, (100, 255, 100)),
+            (f"Growth Rate: {avg_growth:.2f}", avg_growth / 2.0, (100, 255, 255)),
+            (f"Toxicity: {avg_tox:.2f}", avg_tox / 10.0, (255, 100, 100))
+        ]
+        
+        for text, pct, color in traits:
+            self._draw_text(screen, text, x + 10, y, (220, 220, 220))
+            
+            # Bar
+            bar_x = x + 200
+            bar_width = 100
+            bar_height = 8
+            pygame.draw.rect(screen, (50, 50, 50), (bar_x, y + 5, bar_width, bar_height))
+            pygame.draw.rect(screen, color, (bar_x, y + 5, bar_width * min(1.0, pct), bar_height))
+            
+            y += 25
+
+    def _draw_popup_background(self, screen, x, y, w, h, bg_color, border_color):
+        """Helper to draw popup background."""
+        # Overlay
+        overlay = pygame.Surface((screen.get_width(), screen.get_height()), pygame.SRCALPHA)
+        pygame.draw.rect(overlay, (0, 0, 0, 150), pygame.Rect(0, 0, screen.get_width(), screen.get_height()))
+        screen.blit(overlay, (0, 0))
+        
+        # Popup
+        popup_surface = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(popup_surface, bg_color, pygame.Rect(0, 0, w, h), border_radius=12)
+        pygame.draw.rect(popup_surface, border_color, pygame.Rect(0, 0, w, h), 2, border_radius=12)
+        screen.blit(popup_surface, (x, y))
+        
+        # Close instruction
         close_text = "Click anywhere to close"
         close_surf = self._get_cached_text(close_text, self.small_font, (150, 150, 150))
-        screen.blit(close_surf, (x + (popup_width - 40 - close_surf.get_width()) // 2, y))
+        screen.blit(close_surf, (x + (w - 40 - close_surf.get_width()) // 2, y + h - 30))
+
+    def _draw_section_title(self, screen, text, x, y, color):
+        """Helper to draw section title."""
+        surf = self._get_cached_text(text, self.text_font, color)
+        screen.blit(surf, (x, y))
+
+    def _draw_text(self, screen, text, x, y, color):
+        """Helper to draw simple text."""
+        surf = self._get_cached_text(text, self.small_font, color)
+        screen.blit(surf, (x, y))
     
     def _render_event_log(self, screen: pygame.Surface):
         """
-        Render the event log (Battle Feed) at the bottom.
+        Render the event log (Battle Feed) at the bottom left.
         
-        Panel is positioned in the bottom margin (200px reserved area).
+        Panel is positioned in the bottom left corner, aligned with other panels.
         """
-        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        
+        # Match dimensions of other left-side panels
+        panel_width = 230
         panel_height = 190
-        panel_y = screen.get_height() - panel_height - 5  # 5px from bottom edge
+        panel_x = 10
+        panel_y = screen_height - panel_height - 10
         
-        # Panel background
-        panel_surface = pygame.Surface((screen_width, panel_height), pygame.SRCALPHA)
-        pygame.draw.rect(
-            panel_surface,
-            self.panel_bg,
-            pygame.Rect(0, 0, screen_width, panel_height)
-        )
-        screen.blit(panel_surface, (0, panel_y))
-        
-        # Title
-        title_surface = self._get_cached_text("Battle Feed", self.text_font, (200, 200, 255))
-        screen.blit(title_surface, (20, panel_y + 10))
-        
+        if not self._render_panel_container(screen, panel_x, panel_y, panel_width, panel_height, "Battle Feed", "log"):
+            return
+            
         # Event messages
-        y_offset = 40
+        y_offset = 35
         for event_msg in list(self.event_log):
             if y_offset > panel_height - 20:
                 break
@@ -1029,24 +1899,18 @@ class UIComponents:
         panel_width = 230
         margin_from_edge = 10
         panel_x = screen.get_width() - panel_width - margin_from_edge
-        # Anchor at the top of the right margin
-        panel_y = 120
+        
+        # Position below Biome panel (dynamic)
+        biome_expanded = self.panel_states.get('biome', True)
+        biome_h = 220 if biome_expanded else 28
+        
+        panel_y = 10 + biome_h + 10
 
         # Panel background
         panel_height = self.controls_panel_height
-        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-        pygame.draw.rect(
-            panel_surface,
-            (20, 20, 30, 220),
-            pygame.Rect(0, 0, panel_width, panel_height),
-            border_radius=8
-        )
-        screen.blit(panel_surface, (panel_x, panel_y))
-
-        # Header
-        header_text = "CONTROLS"
-        header_surface = self.text_font.render(header_text, True, (200, 200, 255))
-        screen.blit(header_surface, (panel_x + 10, panel_y + 8))
+        
+        if not self._render_panel_container(screen, panel_x, panel_y, panel_width, panel_height, "CONTROLS", "controls"):
+            return
 
         y = panel_y + 36
         x = panel_x + 10
@@ -1178,16 +2042,114 @@ class UIComponents:
 
 
     
+    def _render_world_stats_panel(self, screen: pygame.Surface, battle: SpatialBattle):
+        """
+        Render a panel showing global world statistics.
+        
+        Positioned in the right margin, below controls and above pellet stats.
+        """
+        panel_width = 230
+        margin_from_edge = 10
+        
+        # Position below Controls panel (dynamic)
+        biome_expanded = self.panel_states.get('biome', True)
+        biome_h = 220 if biome_expanded else 28
+        
+        controls_expanded = self.panel_states.get('controls', True)
+        controls_h = self.controls_panel_height if controls_expanded else 28
+        
+        panel_x = screen.get_width() - panel_width - margin_from_edge
+        panel_y = 10 + biome_h + 10 + controls_h + 10
+        panel_height = 260
+        
+        if not self._render_panel_container(screen, panel_x, panel_y, panel_width, panel_height, "World Statistics", "stats"):
+            return
+            
+        y = panel_y + 35
+        x = panel_x + 10
+        
+        # Population Stats
+        creatures = battle.creatures
+        alive_count = sum(1 for c in creatures if c.is_alive())
+        total_count = len(creatures)
+        
+        pop_text = f"Population: {alive_count} / {total_count}"
+        screen.blit(self.small_font.render(pop_text, True, self.text_color), (x, y))
+        y += 20
+        
+        # Infection Stats
+        infected_count = sum(1 for c in creatures if c.is_alive() and c.creature.active_infection)
+        infection_rate = (infected_count / alive_count * 100) if alive_count > 0 else 0
+        
+        inf_color = (255, 100, 100) if infection_rate > 20 else (200, 200, 200)
+        inf_text = f"Infected: {infected_count} ({infection_rate:.1f}%)"
+        screen.blit(self.small_font.render(inf_text, True, inf_color), (x, y))
+        y += 20
+        
+        # Pandemic Alert Level
+        if infection_rate > 50:
+            alert_text = "⚠ PANDEMIC ALERT ⚠"
+            alert_color = (255, 50, 50)
+        elif infection_rate > 20:
+            alert_text = "⚠ OUTBREAK DETECTED"
+            alert_color = (255, 150, 50)
+        else:
+            alert_text = "Status: Stable"
+            alert_color = (100, 255, 100)
+            
+        screen.blit(self.small_font.render(alert_text, True, alert_color), (x, y))
+        y += 30
+        
+        # Generation Stats
+        gens = [c.creature.generation for c in creatures if c.is_alive() and hasattr(c.creature, 'generation')]
+        if gens:
+            avg_gen = sum(gens) / len(gens)
+            max_gen = max(gens)
+        else:
+            avg_gen = 0
+            max_gen = 0
+            
+        screen.blit(self.small_font.render(f"Avg Generation: {avg_gen:.1f}", True, self.text_color), (x, y))
+        y += 20
+        screen.blit(self.small_font.render(f"Max Generation: {max_gen}", True, self.text_color), (x, y))
+        y += 30
+        
+        # Extinction Counter (Approximation based on strain groups)
+        strain_groups = {}
+        for c in creatures:
+            sid = c.creature.strain_id
+            if sid not in strain_groups:
+                strain_groups[sid] = {'total': 0, 'alive': 0}
+            strain_groups[sid]['total'] += 1
+            if c.is_alive():
+                strain_groups[sid]['alive'] += 1
+                
+        extinct_count = sum(1 for s in strain_groups.values() if s['total'] > 0 and s['alive'] == 0)
+        
+        screen.blit(self.small_font.render(f"Extinct Strains: {extinct_count}", True, (150, 150, 150)), (x, y))
+        y += 20
+        
+        # Active Strains
+        active_strains = sum(1 for s in strain_groups.values() if s['alive'] > 0)
+        screen.blit(self.small_font.render(f"Active Strains: {active_strains}", True, (150, 255, 150)), (x, y))
+        y += 20
+        
+        # Births and Deaths
+        births = getattr(battle.lifecycle_manager, 'birth_count', 0)
+        deaths = getattr(battle.lifecycle_manager, 'death_count', 0)
+        screen.blit(self.small_font.render(f"Births: {births}", True, (100, 255, 200)), (x, y))
+        y += 20
+        screen.blit(self.small_font.render(f"Deaths: {deaths}", True, (255, 150, 150)), (x, y))
+        y += 30
+        
+        # Time Scale
+        time_text = f"Sim Time: {battle.current_time:.1f}s"
+        screen.blit(self.small_font.render(time_text, True, (150, 200, 255)), (x, y))
+
+
     def _render_pellet_stats_panel(self, screen: pygame.Surface, battle: SpatialBattle):
         """
         Render a panel showing pellet population statistics.
-        
-        Panel is positioned in the right margin below the CREATURES panel.
-        Sized to fit above the Battle Feed panel.
-        
-        Args:
-            screen: Pygame surface to draw on
-            battle: The spatial battle containing pellets
         """
         pellets = battle.arena.pellets
         if not pellets:
@@ -1196,79 +2158,101 @@ class UIComponents:
         panel_width = 230
         margin_from_edge = 10
 
-        # Position in right margin area, below the creatures panel
+        # Position below World Stats panel (dynamic)
+        biome_expanded = self.panel_states.get('biome', True)
+        biome_h = 220 if biome_expanded else 28
+        
+        controls_expanded = self.panel_states.get('controls', True)
+        controls_h = self.controls_panel_height if controls_expanded else 28
+        
+        stats_expanded = self.panel_states.get('stats', True)
+        stats_h = 260 if stats_expanded else 28
+        
         panel_x = screen.get_width() - panel_width - margin_from_edge
-        panel_y = 660  # Below creatures panel (90 + 550 + 20 spacing)
+        panel_y = 10 + biome_h + 10 + controls_h + 10 + stats_h + 10
 
-        # Calculate available height before Battle Feed starts
-        # Battle Feed starts at screen_height - 195
-        battle_feed_top = screen.get_height() - 195
-        available_height = battle_feed_top - panel_y - 10  # 10px gap
-        panel_height = min(180, max(50, available_height))  # Ensure minimum 50px height
+        # Calculate available height - extend to bottom of screen minus margin
+        available_height = screen.get_height() - panel_y - 10
+        panel_height = max(50, available_height)
+        
+        # Update rect for hit testing
+        self.pellet_panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
 
-        # Skip rendering if panel would be too small to be useful
-        if panel_height < 50:
+        if not self._render_panel_container(screen, panel_x, panel_y, panel_width, panel_height, "Pellet Ecosystem", "pellets"):
             return
 
-        # Panel background with increased opacity for better text visibility
-        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-        # Use higher opacity background (230 instead of 180) for better text contrast
-        pygame.draw.rect(
-            panel_surface,
-            (20, 20, 30, 230),
-            pygame.Rect(0, 0, panel_width, panel_height),
-            border_radius=8
-        )
-        screen.blit(panel_surface, (panel_x, panel_y))
+        # Content Rendering with Scrolling
+        content_x = panel_x + 10
+        content_y_start = panel_y + 35
+        content_width = panel_width - 20
+        content_height = panel_height - 45 # Subtract header and bottom padding
+        
+        # Create a clipping rect for the content
+        clip_rect = pygame.Rect(panel_x, content_y_start, panel_width, content_height)
+        old_clip = screen.get_clip()
+        screen.set_clip(clip_rect)
+        
+        y_offset = content_y_start - self.pellet_scroll_offset
+        current_y = y_offset
 
-        # Header
-        header_text = "PELLET ECOSYSTEM"
-        header_surface = self.text_font.render(header_text, True, (150, 255, 150))
-        header_rect = header_surface.get_rect(centerx=panel_width // 2, top=10)
-        screen.blit(header_surface, (panel_x + header_rect.x, panel_y + header_rect.y))
-
-        y_offset = 40
+        # Helper to render text line
+        def render_line(text, color=self.text_color):
+            nonlocal current_y
+            surf = self.small_font.render(text, True, color)
+            screen.blit(surf, (content_x, current_y))
+            current_y += 22
 
         # Total count
-        count_text = f"Count: {len(pellets)}"
-        count_surface = self.small_font.render(count_text, True, self.text_color)
-        screen.blit(count_surface, (panel_x + 10, panel_y + y_offset))
-        y_offset += 22
+        render_line(f"Count: {len(pellets)}")
 
         # Average nutrition
         avg_nutrition = sum(p.get_nutritional_value() for p in pellets) / len(pellets)
-        nutrition_text = f"Avg Nutrition: {avg_nutrition:.1f}"
-        nutrition_surface = self.small_font.render(nutrition_text, True, self.text_color)
-        screen.blit(nutrition_surface, (panel_x + 10, panel_y + y_offset))
-        y_offset += 22
+        render_line(f"Avg Nutrition: {avg_nutrition:.1f}")
 
         # Nutrition range
         min_nutrition = min(p.get_nutritional_value() for p in pellets)
         max_nutrition = max(p.get_nutritional_value() for p in pellets)
-        range_text = f"Range: {min_nutrition:.0f}-{max_nutrition:.0f}"
-        range_surface = self.small_font.render(range_text, True, self.text_color)
-        screen.blit(range_surface, (panel_x + 10, panel_y + y_offset))
-        y_offset += 22
+        render_line(f"Range: {min_nutrition:.0f}-{max_nutrition:.0f}")
 
         # Max generation
         max_gen = max(p.generation for p in pellets)
-        gen_text = f"Max Gen: {max_gen}"
-        gen_surface = self.small_font.render(gen_text, True, self.text_color)
-        screen.blit(gen_surface, (panel_x + 10, panel_y + y_offset))
-        y_offset += 22
+        render_line(f"Max Gen: {max_gen}")
 
         # Average growth rate
         avg_growth = sum(p.traits.growth_rate for p in pellets) / len(pellets)
-        growth_text = f"Avg Growth: {avg_growth:.3f}"
-        growth_surface = self.small_font.render(growth_text, True, self.text_color)
-        screen.blit(growth_surface, (panel_x + 10, panel_y + y_offset))
-        y_offset += 22
+        render_line(f"Avg Growth: {avg_growth:.3f}")
 
         # Average toxicity
         avg_toxicity = sum(p.traits.toxicity for p in pellets) / len(pellets)
-        toxicity_text = f"Avg Toxicity: {avg_toxicity:.2f}"
-        toxicity_surface = self.small_font.render(toxicity_text, True, self.text_color)
-        screen.blit(toxicity_surface, (panel_x + 10, panel_y + y_offset))
+        render_line(f"Avg Toxicity: {avg_toxicity:.2f}")
+        
+        # Calculate total content height
+        total_content_height = current_y - y_offset
+        
+        # Restore clip
+        screen.set_clip(old_clip)
+        
+        # Clamp scroll offset
+        max_scroll = max(0, total_content_height - content_height)
+        self.pellet_scroll_offset = max(0, min(self.pellet_scroll_offset, max_scroll))
+        
+        # Draw Scrollbar if needed
+        if total_content_height > content_height:
+            scrollbar_x = panel_x + panel_width - 8
+            scrollbar_y = content_y_start
+            scrollbar_h = content_height
+            
+            # Track
+            pygame.draw.rect(screen, (30, 30, 40), (scrollbar_x, scrollbar_y, 4, scrollbar_h))
+            
+            # Thumb
+            thumb_h = max(20, (content_height / total_content_height) * scrollbar_h)
+            if max_scroll > 0:
+                thumb_y = scrollbar_y + (self.pellet_scroll_offset / max_scroll) * (scrollbar_h - thumb_h)
+            else:
+                thumb_y = scrollbar_y
+                
+            pygame.draw.rect(screen, (100, 100, 120), (scrollbar_x, thumb_y, 4, thumb_h), border_radius=2)
         
 
     def draw_battle_timer(self, screen: pygame.Surface, time: float, position: tuple):
@@ -1324,7 +2308,11 @@ class UIComponents:
         panel_width = 230
         margin_from_edge = 10
         panel_x = screen.get_width() - panel_width - margin_from_edge
-        panel_y = 120
+        
+        # Recalculate Panel Y based on Biome state (default expanded for hit testing if unknown)
+        biome_expanded = self.panel_states.get('biome', True)
+        biome_h = 220 if biome_expanded else 28
+        panel_y = 10 + biome_h + 10
 
         btn_w = 28
         btn_h = 20
@@ -1367,23 +2355,14 @@ class UIComponents:
         panel_x = (screen_width - panel_width) // 2
         panel_y = screen_height - panel_height - 10
         
-        # Panel Background (Sci-Fi Style)
-        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
-        
-        # Main background
-        s = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-        pygame.draw.rect(s, (10, 20, 30, 220), s.get_rect(), border_radius=10)
-        pygame.draw.rect(s, (0, 255, 255), s.get_rect(), 1, border_radius=10)  # Cyan border
-        screen.blit(s, (panel_x, panel_y))
+        if not self._render_panel_container(screen, panel_x, panel_y, panel_width, panel_height, "EXPERIMENT CONTROLS", "overseer"):
+            return
         
         # Header: Bio-Data
-        header_y = panel_y + 15
-        title_text = "EXPERIMENT CONTROLS"
-        title_surf = self._get_cached_text(title_text, self.text_font, (0, 255, 255))
-        screen.blit(title_surf, (panel_x + (panel_width - title_surf.get_width()) // 2, header_y))
+        header_y = panel_y + 30 # Adjusted for container header
         
         # Bio-Data Gauge
-        data_y = header_y + 30
+        data_y = header_y + 5
         data_text = f"BIO-DATA: {int(overseer.bio_data)}/{int(overseer.max_bio_data)}"
         data_surf = self._get_cached_text(data_text, self.text_font, (255, 255, 255))
         screen.blit(data_surf, (panel_x + 20, data_y))
@@ -1465,3 +2444,618 @@ class UIComponents:
                     pass
             
             btn_x += btn_width + btn_margin
+
+    def render_dilemma_popup(self, screen: pygame.Surface, dilemma):
+        """
+        Render the ethical dilemma popup.
+        
+        Args:
+            screen: Pygame surface
+            dilemma: The active EthicalDilemma
+        """
+        # Clear interactive rects
+        self.dilemma_choice_rects = {}
+        self.ask_advisor_rect = None
+        
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        
+        # Dim background
+        overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
+        pygame.draw.rect(overlay, (0, 0, 0, 200), overlay.get_rect())
+        screen.blit(overlay, (0, 0))
+        
+        # Popup dimensions
+        popup_width = 600
+        popup_height = 500
+        popup_x = (screen_width - popup_width) // 2
+        popup_y = (screen_height - popup_height) // 2
+        
+        # Popup background
+        popup_rect = pygame.Rect(popup_x, popup_y, popup_width, popup_height)
+        pygame.draw.rect(screen, (30, 30, 40), popup_rect, border_radius=12)
+        pygame.draw.rect(screen, (100, 150, 255), popup_rect, 2, border_radius=12)
+        
+        # Title
+        title_surf = self._get_cached_text("⚠️ ETHICAL DILEMMA", self.title_font, (255, 200, 100))
+        title_rect = title_surf.get_rect(centerx=popup_rect.centerx, top=popup_rect.top + 20)
+        screen.blit(title_surf, title_rect)
+        
+        # Dilemma Name
+        name_surf = self._get_cached_text(dilemma.title, self.title_font, (255, 255, 255))
+        name_rect = name_surf.get_rect(centerx=popup_rect.centerx, top=title_rect.bottom + 20)
+        screen.blit(name_surf, name_rect)
+        
+        # Description (wrapped)
+        desc_y = name_rect.bottom + 20
+        words = dilemma.description.split(' ')
+        lines = []
+        current_line = []
+        
+        for word in words:
+            current_line.append(word)
+            test_line = ' '.join(current_line)
+            if self.text_font.size(test_line)[0] > popup_width - 60:
+                current_line.pop()
+                lines.append(' '.join(current_line))
+                current_line = [word]
+        lines.append(' '.join(current_line))
+        
+        for line in lines:
+            line_surf = self._get_cached_text(line, self.text_font, (200, 200, 200))
+            line_rect = line_surf.get_rect(centerx=popup_rect.centerx, top=desc_y)
+            screen.blit(line_surf, line_rect)
+            desc_y += 25
+            
+        # Choices
+        choice_y = desc_y + 30
+        mouse_pos = pygame.mouse.get_pos()
+        
+        for i, choice in enumerate(dilemma.choices):
+            choice_rect = pygame.Rect(popup_x + 30, choice_y, popup_width - 60, 60)
+            
+            # Hover effect
+            is_hovered = choice_rect.collidepoint(mouse_pos)
+            bg_color = (50, 50, 70) if not is_hovered else (70, 70, 90)
+            border_color = (100, 100, 100) if not is_hovered else (150, 200, 255)
+            
+            pygame.draw.rect(screen, bg_color, choice_rect, border_radius=8)
+            pygame.draw.rect(screen, border_color, choice_rect, 1, border_radius=8)
+            
+            # Choice Text
+            text_surf = self._get_cached_text(f"{i+1}. {choice.text}", self.text_font, (255, 255, 255))
+            screen.blit(text_surf, (choice_rect.x + 15, choice_rect.y + 10))
+            
+            # Ethics Impact
+            impact_text = f"Welfare:{choice.welfare_impact:+.0f}  Ecosystem:{choice.ecosystem_impact:+.0f}  Integrity:{choice.integrity_impact:+.0f}  Intervention:{choice.intervention_impact:+.0f}"
+            impact_surf = self._get_cached_text(impact_text, self.small_font, (150, 150, 150))
+            screen.blit(impact_surf, (choice_rect.x + 15, choice_rect.y + 35))
+            
+            # Store rect for click detection
+            self.dilemma_choice_rects[i] = choice_rect
+            
+            choice_y += 70
+            
+        # Ask Advisors Button
+        advisor_btn_rect = pygame.Rect(popup_x + 30, popup_rect.bottom - 50, 150, 30)
+        is_hovered = advisor_btn_rect.collidepoint(mouse_pos)
+        bg_color = (40, 60, 80) if not is_hovered else (60, 80, 100)
+        
+        pygame.draw.rect(screen, bg_color, advisor_btn_rect, border_radius=6)
+        pygame.draw.rect(screen, (100, 150, 200), advisor_btn_rect, 1, border_radius=6)
+        
+        btn_text = self._get_cached_text("Ask Advisors", self.text_font, (200, 220, 255))
+        text_rect = btn_text.get_rect(center=advisor_btn_rect.center)
+        screen.blit(btn_text, text_rect)
+        
+        
+        
+        self.ask_advisor_rect = advisor_btn_rect
+
+    def render_ethics_dashboard(self, screen: pygame.Surface, battle: SpatialBattle):
+        """
+        Render the ethics dashboard.
+        
+        Args:
+            screen: Pygame surface
+            battle: The spatial battle
+        """
+        if not self.show_ethics_dashboard:
+            return
+            
+        if not hasattr(battle, 'ethics_system'):
+            return
+            
+        ethics = battle.ethics_system
+        
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        
+        # Panel dimensions
+        panel_width = 400
+        panel_height = 350
+        panel_x = screen_width - panel_width - 20
+        panel_y = 100 # Below top bar
+        
+        # Panel background
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        
+        # Shadow
+        shadow_rect = panel_rect.copy()
+        shadow_rect.move_ip(4, 4)
+        pygame.draw.rect(screen, (0, 0, 0, 100), shadow_rect, border_radius=10)
+        
+        # Main bg
+        pygame.draw.rect(screen, (20, 25, 30, 240), panel_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 200, 255), panel_rect, 2, border_radius=10)
+        
+        # Header
+        header_text = self._get_cached_text("Ethics Dashboard", self.title_font, (200, 255, 255))
+        header_rect = header_text.get_rect(centerx=panel_rect.centerx, top=panel_rect.top + 15)
+        screen.blit(header_text, header_rect)
+        
+        # Research Approach
+        approach = ethics.get_research_approach()
+        approach_surf = self._get_cached_text(f"Approach: {approach}", self.text_font, (255, 255, 200))
+        approach_rect = approach_surf.get_rect(centerx=panel_rect.centerx, top=header_rect.bottom + 10)
+        screen.blit(approach_surf, approach_rect)
+        
+        # Scores
+        y = approach_rect.bottom + 30
+        x_label = panel_x + 30
+        x_bar = panel_x + 150
+        bar_width = 200
+        bar_height = 15
+        
+        metrics = [
+            ("Welfare", ethics.welfare_score, (100, 255, 100)),
+            ("Ecosystem", ethics.ecosystem_score, (100, 200, 100)),
+            ("Integrity", ethics.integrity_score, (100, 100, 255)),
+            ("Intervention", ethics.intervention_score, (255, 150, 100))
+        ]
+        
+        for label, score, color in metrics:
+            # Label
+            lbl_surf = self._get_cached_text(label, self.text_font, (200, 200, 200))
+            screen.blit(lbl_surf, (x_label, y))
+            
+            # Bar Background
+            pygame.draw.rect(screen, (50, 50, 50), (x_bar, y + 4, bar_width, bar_height))
+            
+            # Bar Fill
+            # Scores are -100 to 100 (except intervention 0-100)
+            if label == "Intervention":
+                fill_pct = score / 100.0
+                fill_w = bar_width * fill_pct
+                fill_rect = pygame.Rect(x_bar, y + 4, fill_w, bar_height)
+            else:
+                # Normalize -100..100 to 0..1
+                norm_score = (score + 100) / 200.0
+                fill_w = bar_width * norm_score
+                fill_rect = pygame.Rect(x_bar, y + 4, fill_w, bar_height)
+                
+                # Center marker
+                center_x = x_bar + bar_width / 2
+                pygame.draw.line(screen, (150, 150, 150), (center_x, y), (center_x, y + bar_height + 8), 1)
+            
+            pygame.draw.rect(screen, color, fill_rect)
+            
+            # Score Text
+            score_text = f"{score:+.0f}" if label != "Intervention" else f"{score:.0f}"
+            score_surf = self._get_cached_text(score_text, self.small_font, (255, 255, 255))
+            screen.blit(score_surf, (x_bar + bar_width + 10, y + 4))
+            
+            y += 40
+            
+        # Footer hint
+        hint_text = self._get_cached_text("Press 'E' to toggle", self.small_font, (150, 150, 150))
+        hint_rect = hint_text.get_rect(centerx=panel_rect.centerx, bottom=panel_rect.bottom - 10)
+        screen.blit(hint_text, hint_rect)
+
+
+
+    def render_assistant_panel(self, screen: pygame.Surface, battle: SpatialBattle):
+        """
+        Render the research assistant panel.
+        
+        Args:
+            screen: Pygame surface
+            battle: The spatial battle
+        """
+        if not self.show_advisor_panel:
+            return
+            
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        
+        # Panel dimensions
+        panel_width = 500
+        panel_height = 400
+        panel_x = (screen_width - panel_width) // 2
+        panel_y = (screen_height - panel_height) // 2
+        
+        # Panel background
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        self.advisor_panel_rect = panel_rect
+        
+        # Shadow
+        shadow_rect = panel_rect.copy()
+        shadow_rect.move_ip(4, 4)
+        pygame.draw.rect(screen, (0, 0, 0, 100), shadow_rect, border_radius=10)
+        
+        # Main bg
+        pygame.draw.rect(screen, (25, 30, 40), panel_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 150, 200), panel_rect, 2, border_radius=10)
+        
+        # Header
+        header_text = self._get_cached_text("Research Assistants", self.title_font, (200, 220, 255))
+        header_rect = header_text.get_rect(centerx=panel_rect.centerx, top=panel_rect.top + 15)
+        screen.blit(header_text, header_rect)
+        
+        # Close Button
+        close_size = 24
+        close_rect = pygame.Rect(panel_rect.right - 35, panel_rect.top + 10, close_size, close_size)
+        self.advisor_close_rect = close_rect
+        
+        mouse_pos = pygame.mouse.get_pos()
+        is_hover = close_rect.collidepoint(mouse_pos)
+        color = (255, 100, 100) if is_hover else (200, 80, 80)
+        
+        pygame.draw.rect(screen, color, close_rect, border_radius=4)
+        x_surf = self._get_cached_text("X", self.small_font, (255, 255, 255))
+        x_rect = x_surf.get_rect(center=close_rect.center)
+        screen.blit(x_surf, x_rect)
+        
+        # Content
+        content_y = header_rect.bottom + 20
+        
+        if hasattr(battle, 'assistant_manager') and battle.assistant_manager:
+            assistants = battle.assistant_manager.assistants
+            
+            for assistant in assistants:
+                # Assistant Card
+                card_rect = pygame.Rect(panel_x + 20, content_y, panel_width - 40, 90)
+                pygame.draw.rect(screen, (40, 45, 55), card_rect, border_radius=6)
+                pygame.draw.rect(screen, (60, 70, 90), card_rect, 1, border_radius=6)
+                
+                # Name & Title
+                name_surf = self._get_cached_text(assistant.name, self.text_font, (255, 255, 255))
+                screen.blit(name_surf, (card_rect.x + 10, card_rect.y + 10))
+                
+                title_surf = self._get_cached_text(assistant.title, self.small_font, (150, 200, 200))
+                screen.blit(title_surf, (card_rect.x + 10, card_rect.y + 32))
+                
+                # Philosophy Badge
+                phil_color = (100, 100, 100)
+                if "humane" in assistant.philosophy.value: phil_color = (100, 200, 100)
+                elif "pragmatic" in assistant.philosophy.value: phil_color = (100, 150, 255)
+                elif "naturalist" in assistant.philosophy.value: phil_color = (200, 180, 100)
+                
+                phil_surf = self._get_cached_text(assistant.philosophy.value.title(), self.small_font, phil_color)
+                screen.blit(phil_surf, (card_rect.right - phil_surf.get_width() - 10, card_rect.y + 10))
+                
+                # Current Advice / Comment
+                # If dilemma is pending, show specific advice
+                # Otherwise show general comment
+        pygame.draw.rect(screen, (100, 150, 200), advisor_btn_rect, 1, border_radius=6)
+        
+        btn_text = self._get_cached_text("Ask Advisors", self.text_font, (200, 220, 255))
+        text_rect = btn_text.get_rect(center=advisor_btn_rect.center)
+        screen.blit(btn_text, text_rect)
+        
+        
+        
+        self.ask_advisor_rect = advisor_btn_rect
+
+    def render_ethics_dashboard(self, screen: pygame.Surface, battle: SpatialBattle):
+        """
+        Render the ethics dashboard.
+        
+        Args:
+            screen: Pygame surface
+            battle: The spatial battle
+        """
+        if not self.show_ethics_dashboard:
+            return
+            
+        if not hasattr(battle, 'ethics_system'):
+            return
+            
+        ethics = battle.ethics_system
+        
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        
+        # Panel dimensions
+        panel_width = 400
+        panel_height = 350
+        panel_x = screen_width - panel_width - 20
+        panel_y = 100 # Below top bar
+        
+        # Panel background
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        
+        # Shadow
+        shadow_rect = panel_rect.copy()
+        shadow_rect.move_ip(4, 4)
+        pygame.draw.rect(screen, (0, 0, 0, 100), shadow_rect, border_radius=10)
+        
+        # Main bg
+        pygame.draw.rect(screen, (20, 25, 30, 240), panel_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 200, 255), panel_rect, 2, border_radius=10)
+        
+        # Header
+        header_text = self._get_cached_text("Ethics Dashboard", self.title_font, (200, 255, 255))
+        header_rect = header_text.get_rect(centerx=panel_rect.centerx, top=panel_rect.top + 15)
+        screen.blit(header_text, header_rect)
+        
+        # Research Approach
+        approach = ethics.get_research_approach()
+        approach_surf = self._get_cached_text(f"Approach: {approach}", self.text_font, (255, 255, 200))
+        approach_rect = approach_surf.get_rect(centerx=panel_rect.centerx, top=header_rect.bottom + 10)
+        screen.blit(approach_surf, approach_rect)
+        
+        # Scores
+        y = approach_rect.bottom + 30
+        x_label = panel_x + 30
+        x_bar = panel_x + 150
+        bar_width = 200
+        bar_height = 15
+        
+        metrics = [
+            ("Welfare", ethics.welfare_score, (100, 255, 100)),
+            ("Ecosystem", ethics.ecosystem_score, (100, 200, 100)),
+            ("Integrity", ethics.integrity_score, (100, 100, 255)),
+            ("Intervention", ethics.intervention_score, (255, 150, 100))
+        ]
+        
+        for label, score, color in metrics:
+            # Label
+            lbl_surf = self._get_cached_text(label, self.text_font, (200, 200, 200))
+            screen.blit(lbl_surf, (x_label, y))
+            
+            # Bar Background
+            pygame.draw.rect(screen, (50, 50, 50), (x_bar, y + 4, bar_width, bar_height))
+            
+            # Bar Fill
+            # Scores are -100 to 100 (except intervention 0-100)
+            if label == "Intervention":
+                fill_pct = score / 100.0
+                fill_w = bar_width * fill_pct
+                fill_rect = pygame.Rect(x_bar, y + 4, fill_w, bar_height)
+            else:
+                # Normalize -100..100 to 0..1
+                norm_score = (score + 100) / 200.0
+                fill_w = bar_width * norm_score
+                fill_rect = pygame.Rect(x_bar, y + 4, fill_w, bar_height)
+                
+                # Center marker
+                center_x = x_bar + bar_width / 2
+                pygame.draw.line(screen, (150, 150, 150), (center_x, y), (center_x, y + bar_height + 8), 1)
+            
+            pygame.draw.rect(screen, color, fill_rect)
+            
+            # Score Text
+            score_text = f"{score:+.0f}" if label != "Intervention" else f"{score:.0f}"
+            score_surf = self._get_cached_text(score_text, self.small_font, (255, 255, 255))
+            screen.blit(score_surf, (x_bar + bar_width + 10, y + 4))
+            
+            y += 40
+            
+        # Footer hint
+        hint_text = self._get_cached_text("Press 'E' to toggle", self.small_font, (150, 150, 150))
+        hint_rect = hint_text.get_rect(centerx=panel_rect.centerx, bottom=panel_rect.bottom - 10)
+        screen.blit(hint_text, hint_rect)
+
+
+
+    def render_assistant_panel(self, screen: pygame.Surface, battle: SpatialBattle):
+        """
+        Render the research assistant panel.
+        
+        Args:
+            screen: Pygame surface
+            battle: The spatial battle
+        """
+        if not self.show_advisor_panel:
+            return
+            
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        
+        # Panel dimensions
+        panel_width = 500
+        panel_height = 400
+        panel_x = (screen_width - panel_width) // 2
+        panel_y = (screen_height - panel_height) // 2
+        
+        # Panel background
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        self.advisor_panel_rect = panel_rect
+        
+        # Shadow
+        shadow_rect = panel_rect.copy()
+        shadow_rect.move_ip(4, 4)
+        pygame.draw.rect(screen, (0, 0, 0, 100), shadow_rect, border_radius=10)
+        
+        # Main bg
+        pygame.draw.rect(screen, (25, 30, 40), panel_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 150, 200), panel_rect, 2, border_radius=10)
+        
+        # Header
+        header_text = self._get_cached_text("Research Assistants", self.title_font, (200, 220, 255))
+        header_rect = header_text.get_rect(centerx=panel_rect.centerx, top=panel_rect.top + 15)
+        screen.blit(header_text, header_rect)
+        
+        # Close Button
+        close_size = 24
+        close_rect = pygame.Rect(panel_rect.right - 35, panel_rect.top + 10, close_size, close_size)
+        self.advisor_close_rect = close_rect
+        
+        mouse_pos = pygame.mouse.get_pos()
+        is_hover = close_rect.collidepoint(mouse_pos)
+        color = (255, 100, 100) if is_hover else (200, 80, 80)
+        
+        pygame.draw.rect(screen, color, close_rect, border_radius=4)
+        x_surf = self._get_cached_text("X", self.small_font, (255, 255, 255))
+        x_rect = x_surf.get_rect(center=close_rect.center)
+        screen.blit(x_surf, x_rect)
+        
+        # Content
+        content_y = header_rect.bottom + 20
+        
+        if hasattr(battle, 'assistant_manager') and battle.assistant_manager:
+            assistants = battle.assistant_manager.assistants
+            
+            for assistant in assistants:
+                # Assistant Card
+                card_rect = pygame.Rect(panel_x + 20, content_y, panel_width - 40, 90)
+                pygame.draw.rect(screen, (40, 45, 55), card_rect, border_radius=6)
+                pygame.draw.rect(screen, (60, 70, 90), card_rect, 1, border_radius=6)
+                
+                # Name & Title
+                name_surf = self._get_cached_text(assistant.name, self.text_font, (255, 255, 255))
+                screen.blit(name_surf, (card_rect.x + 10, card_rect.y + 10))
+                
+                title_surf = self._get_cached_text(assistant.title, self.small_font, (150, 200, 200))
+                screen.blit(title_surf, (card_rect.x + 10, card_rect.y + 32))
+                
+                # Philosophy Badge
+                phil_color = (100, 100, 100)
+                if "humane" in assistant.philosophy.value: phil_color = (100, 200, 100)
+                elif "pragmatic" in assistant.philosophy.value: phil_color = (100, 150, 255)
+                elif "naturalist" in assistant.philosophy.value: phil_color = (200, 180, 100)
+                
+                phil_surf = self._get_cached_text(assistant.philosophy.value.title(), self.small_font, phil_color)
+                screen.blit(phil_surf, (card_rect.right - phil_surf.get_width() - 10, card_rect.y + 10))
+                
+                # Current Advice / Comment
+                # If dilemma is pending, show specific advice
+                # Otherwise show general comment
+                comment = ""
+                if hasattr(battle, 'pending_dilemma') and battle.pending_dilemma:
+                    comment = assistant.get_advice(battle.pending_dilemma, battle.ethics_system)
+                elif hasattr(battle, 'ethics_system'):
+                    comment = assistant.get_general_comment(battle.ethics_system)
+                print(f"Assistant: {assistant.name}, Comment: {comment}") # Debug logging
+                
+                # Wrap comment
+                words = comment.split(' ')
+                lines = []
+                current_line = []
+                for word in words:
+                    current_line.append(word)
+                    if self.small_font.size(' '.join(current_line))[0] > card_rect.width - 20:
+                        current_line.pop()
+                        lines.append(' '.join(current_line))
+                        current_line = [word]
+                lines.append(' '.join(current_line))
+                
+                text_y = card_rect.y + 50
+                for line in lines[:2]: # Max 2 lines
+                    line_surf = self._get_cached_text(line, self.small_font, (200, 200, 200))
+                    screen.blit(line_surf, (card_rect.x + 10, text_y))
+                    text_y += 16
+                
+                content_y += 100
+
+    def render_expanded_feed(self, screen: pygame.Surface, battle: SpatialBattle, simulation_speed: float, paused: bool):
+        """
+        Render expanded battle feed mode - full screen detailed event log.
+        
+        Args:
+            screen: Pygame surface
+            battle: Battle instance
+            simulation_speed: Current simulation speed multiplier
+            paused: Whether simulation is paused
+        """
+        # Fill background
+        screen.fill((15, 15, 20))
+        
+        # Header
+        header_height = 80
+        pygame.draw.rect(screen, (25, 25, 35), (0, 0, screen.get_width(), header_height))
+        pygame.draw.rect(screen, (60, 60, 80), (0, header_height-2, screen.get_width(), 2))
+        
+        # Title
+        title = self.title_font.render("EXPANDED BATTLE FEED", True, (100, 200, 255))
+        screen.blit(title, (20, 20))
+        
+        # Speed indicator
+        if paused:
+            speed_text = "PAUSED"
+            speed_color = (255, 100, 100)
+        else:
+            speed_text = f"{simulation_speed}x"
+            speed_color = (100, 255, 100)
+        speed_surf = self.text_font.render(speed_text, True, speed_color)
+        screen.blit(speed_surf, (screen.get_width() - 150, 25))
+        
+        # Mode indicator
+        mode_text = "FEED MODE (Press F to toggle)"
+        mode_surf = self.small_font.render(mode_text, True, (150, 150, 150))
+        screen.blit(mode_surf, (20, 55))
+        
+        # Stats summary
+        alive_count = len([c for c in battle.creatures if c.is_alive()])
+        total_births = getattr(battle, 'birth_count', 0)
+        total_deaths = getattr(battle, 'death_count', 0)
+        pellet_count = len(battle.arena.resources)
+        
+        stats_y = header_height + 20
+        stats = [
+            f"Alive: {alive_count}",
+            f"Births: {total_births}",
+            f"Deaths: {total_deaths}",
+            f"Pellets: {pellet_count}",
+            f"Time: {int(getattr(battle, 'current_time', 0))}s"
+        ]
+        
+        stats_x = 20
+        for stat in stats:
+            stat_surf = self.text_font.render(stat, True, (200, 200, 200))
+            screen.blit(stat_surf, (stats_x, stats_y))
+            stats_x += stat_surf.get_width() + 40
+        
+        # Event log
+        log_start_y = stats_y + 50
+        
+        # Get all events (strings)
+        events = list(self.event_log)
+        events.reverse()  # Most recent first
+        
+        # Render events
+        event_y = log_start_y
+        line_height = 30
+        
+        for i, event_message in enumerate(events):
+            if event_y > screen.get_height() - 50:
+                break
+            
+            # Color code based on keywords in message
+            message_lower = event_message.lower()
+            if 'born' in message_lower or 'birth' in message_lower:
+                color = (100, 255, 100)  # Green
+            elif 'died' in message_lower or 'death' in message_lower or 'starved' in message_lower:
+                color = (255, 100, 100)  # Red
+            elif 'attack' in message_lower or 'damage' in message_lower or 'hit' in message_lower:
+                color = (255, 200, 100)  # Orange
+            elif 'pellet' in message_lower or 'grass' in message_lower:
+                color = (100, 255, 255)  # Cyan
+            else:
+                color = (200, 200, 200)  # White
+            
+            # Render event with background
+            bg_rect = pygame.Rect(10, event_y, screen.get_width() - 20, line_height - 2)
+            bg_color = (30, 30, 40) if i % 2 == 0 else (25, 25, 35)
+            pygame.draw.rect(screen, bg_color, bg_rect)
+            
+            text_surf = self.small_font.render(event_message, True, color)
+            screen.blit(text_surf, (15, event_y + 5))
+            
+            event_y += line_height
+        
+        # Controls help
+        help_text = "Controls: Q/W/R/T/Y = Speed | SPACE = Pause | F = Toggle Mode | ESC = Menu"
+        help_surf = self.small_font.render(help_text, True, (100, 100, 120))
+        screen.blit(help_surf, ((screen.get_width() - help_surf.get_width()) // 2, screen.get_height() - 25))

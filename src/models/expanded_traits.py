@@ -661,7 +661,63 @@ DIURNAL_TRAIT = Trait(
         'sunlight_affinity': True,
         'night_fear': True,
         'day_activity_bonus': 1.2,
-        'circadian_rhythm': 'diurnal'
+    }
+)
+
+# ============================================================================
+# IMMUNITY TRAITS - Disease resistance and recovery
+# ============================================================================
+
+ROBUST_IMMUNE_TRAIT = Trait(
+    name="Robust Immunity",
+    description="Strong immune system resists infection",
+    trait_type="physical",
+    strength_modifier=1.0,
+    speed_modifier=1.0,
+    defense_modifier=1.0,
+    rarity="uncommon",
+    dominance="dominant",
+    interaction_effects={
+        'base_immunity_bonus': 0.25,  # +25% base immunity
+        'disease_resistance': 1.25,
+        # Negative trade-off: high metabolic cost
+        'energy_cost_multiplier': 1.1
+    }
+)
+
+FAST_RECOVERY_TRAIT = Trait(
+    name="Fast Recovery",
+    description="Recovers from diseases and injuries quickly",
+    trait_type="physical",
+    strength_modifier=1.0,
+    speed_modifier=1.0,
+    defense_modifier=1.0,
+    rarity="uncommon",
+    dominance="recessive",
+    interaction_effects={
+        'disease_duration_multiplier': 0.7,  # 30% shorter diseases
+        'recovery_speed': 1.3,
+        # Negative trade-off: requires more food during recovery
+        'hunger_rate_while_sick': 1.4
+    }
+)
+
+CARRIER_TRAIT = Trait(
+    name="Asymptomatic Carrier",
+    description="Carries diseases without suffering severe symptoms",
+    trait_type="physical",
+    strength_modifier=1.0,
+    speed_modifier=1.0,
+    defense_modifier=1.0,
+    rarity="rare",
+    dominance="dominant",
+    interaction_effects={
+        'symptom_suppression': 0.8,  # 80% reduction in symptoms (HP drain/stats)
+        'transmission_boost': 1.5,   # Spreads disease more effectively
+        'incubation_extension': 2.0, # Stays in incubating stage longer
+        # Negative trade-off: social stigma (if detected) and constant energy drain
+        'social_distancing_penalty': 0.5,
+        'chronic_energy_drain': 0.5
     }
 )
 

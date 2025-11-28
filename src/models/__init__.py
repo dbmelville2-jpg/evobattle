@@ -10,16 +10,11 @@ This package provides the core game models for EvoBattle:
 - Legacy Fighter, Trait, and Lineage models
 """
 
-# Legacy models (kept for backward compatibility)
-from .fighter import Fighter
-from .trait import Trait
-from .lineage import Lineage
-
 # Core game models
 from .stats import Stats, StatModifier, StatGrowth
 from .ability import Ability, AbilityType, TargetType, AbilityEffect, create_ability
 from .creature import Creature, CreatureType
-from .evolution import EvolutionPath, EvolutionSystem, GeneticsSystem, create_example_evolution_system
+from .evolution import EvolutionPath, EvolutionSystem, create_example_evolution_system
 from .pellet import Pellet, PelletTraits, create_random_pellet, create_pellet_from_creature
 
 # Environmental simulation
@@ -29,10 +24,6 @@ from .environment import (
 )
 
 __all__ = [
-    # Legacy models
-    "Fighter",
-    "Trait",
-    "Lineage",
     # Stats system
     "Stats",
     "StatModifier",
@@ -49,7 +40,6 @@ __all__ = [
     # Evolution system
     "EvolutionPath",
     "EvolutionSystem",
-    "GeneticsSystem",
     "create_example_evolution_system",
     # Pellet system
     "Pellet",
