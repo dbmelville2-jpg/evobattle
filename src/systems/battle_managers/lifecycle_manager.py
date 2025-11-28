@@ -50,7 +50,8 @@ class LifecycleManager:
         creature_grid: SpatialHashGrid,
         breeding_system: Optional[Breeding] = None,
         enhancer: Any = None,
-        reward_tracker: Any = None
+        reward_tracker: Any = None,
+        event_logger: Any = None
     ):
         """
         Initialize the lifecycle manager.
@@ -71,6 +72,7 @@ class LifecycleManager:
         self.breeding_system = breeding_system or Breeding()
         self.enhancer = enhancer
         self.reward_tracker = reward_tracker
+        self.event_logger = event_logger
         
         self.death_count: int = 0
         self.birth_count: int = 0
@@ -198,6 +200,39 @@ class LifecycleManager:
                 message=message,
                 data={'cause': cause, 'killer_id': killer.creature.creature_id if killer else None}
             ))
+            
+            # Log to event logger
+            if self.event_logger:
+                # Calculate age and stats
+                age = creature.creature.age if hasattr(creature.creature, 'age') else 0
+                kills = 0
+                if hasattr(creature.creature, 'history') and hasattr(creature.creature.history, 'kills'):
+                    kills = len(creature.creature.history.kills)
+                pellets = 0
+                
+                strain_name = creature.creature.strain_id if hasattr(creature.creature, 'strain_id') else "Unknown"
+                
+                if killer:
+                    # Combat death - log kill event
+                    killer_strain = killer.creature.strain_id if hasattr(killer.creature, 'strain_id') else "Unknown"
+                    self.event_logger.log_kill(
+                        killer_id=killer.creature.creature_id,
+                        killer_strain=killer_strain,
+                        victim_id=creature.creature.creature_id,
+                        victim_strain=strain_name,
+                        timestamp=creature.creature.age  # Use age as timestamp approximation
+                    )
+                
+                # Log death
+                self.event_logger.log_death(
+                    creature_id=creature.creature.creature_id,
+                    strain_name=strain_name,
+                    cause=cause,
+                    timestamp=age,
+                    age=age,
+                    kills=kills,
+                    pellets_collected=pellets
+                )
             
             # Handle specific death mechanics
             if cause == "starvation":
@@ -446,6 +481,18 @@ class LifecycleManager:
                             'strain_id': offspring.strain_id
                         }
                     ))
+                    
+                    # Log to event logger
+                    if self.event_logger:
+                        parent_ids = [creature1.creature.creature_id, creature2.creature.creature_id]
+                        strain_name = offspring.strain_id if hasattr(offspring, 'strain_id') else "Unknown"
+                        self.event_logger.log_birth(
+                            creature_id=offspring.creature_id,
+                            strain_name=strain_name,
+                            parent_ids=parent_ids,
+                            timestamp=current_time,
+                            position=spawn_pos.to_tuple()
+                        )
                     
                     # Only one offspring per pair per check
                     break

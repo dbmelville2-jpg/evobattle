@@ -116,9 +116,20 @@ class DiseaseSystem:
         if hasattr(creature, 'active_infection') and creature.active_infection:
             return False
             
-        # Check immunity (future feature)
-        if hasattr(creature, 'disease_immunity') and disease.disease_type in creature.disease_immunity:
-            return False
+        # Check immunity using new immune_memory system
+        if hasattr(creature, 'immune_memory') and disease.disease_id in creature.immune_memory:
+            # Check if resistance is high enough to prevent infection
+            resistance = creature.immune_memory[disease.disease_id]
+            if resistance >= 0.9:  # 90%+ resistance = full immunity
+                return False
+        
+        # Check for partial immunity from parent strain
+        if hasattr(creature, 'immune_memory') and disease.parent_id:
+            if disease.parent_id in creature.immune_memory:
+                parent_resistance = creature.immune_memory[disease.parent_id]
+                # Parent strain provides 50% of its resistance to mutated strains
+                if parent_resistance * 0.5 >= 0.9:
+                    return False
             
         # Create infection
         infection = Infection(
@@ -126,7 +137,7 @@ class DiseaseSystem:
             stage=InfectionStage.INCUBATING
         )
         
-        # Attach to creature (will need to add this field to Creature model)
+        # Attach to creature
         creature.active_infection = infection
         return True
 
@@ -191,12 +202,15 @@ class DiseaseSystem:
             elif infection.stage == InfectionStage.RECOVERING:
                 # Recovery period (immune but maybe weak)
                 if infection.time_in_stage >= 10.0: # 10s recovery
-                    # Fully recovered
+                    # Fully recovered - grant immunity
                     creature.active_infection = None
-                    # Add immunity (future)
-                    if not hasattr(creature, 'disease_immunity'):
-                        creature.disease_immunity = []
-                    creature.disease_immunity.append(disease.disease_type)
+                    
+                    # Add immunity using new immune_memory system
+                    if not hasattr(creature, 'immune_memory'):
+                        creature.immune_memory = {}
+                    
+                    # Grant full immunity (1.0 = 100% resistance) to this specific disease strain
+                    creature.immune_memory[disease.disease_id] = 1.0
 
     def _apply_creature_symptoms(self, creature: Creature, disease: Disease, delta_time: float):
         """Apply active disease effects to creature."""

@@ -25,7 +25,7 @@ from src.systems.battle_spatial import SpatialBattle
 from src.systems.living_world import LivingWorldBattleEnhancer
 from src.rendering import (
     GameWindow, ArenaRenderer, CreatureRenderer, PelletRenderer,
-    UIComponents, EventAnimator, CreatureInspector, PauseMenu,
+    UIComponents, EventAnimator, CreatureInspector, PelletInspector, PauseMenu,
     PauseMenuAction, PostGameSummary,
     Camera
 )
@@ -218,7 +218,7 @@ def create_unified_battle() -> SpatialBattle:
 
     # Create battle with random biome
     battle = SpatialBattle(
-        creatures_or_team1=creatures,
+        creatures,
         arena_width=200.0,
         arena_height=200.0,
         biome_type='random',
@@ -267,6 +267,40 @@ def get_creature_at_position(mouse_pos, battle, camera):
         distance = (dx * dx + dy * dy) ** 0.5
         if distance <= click_radius:
             return bc
+    return None
+
+
+def get_pellet_at_position(mouse_pos, battle, camera):
+    """
+    Find the pellet at the given mouse position for selection.
+    
+    Args:
+        mouse_pos: Tuple of (x, y) screen coordinates
+        battle: SpatialBattle instance
+        camera: Camera instance
+    
+    Returns:
+        Pellet if one is found within click radius, None otherwise
+    """
+    click_radius = 15
+    # Check pellets in reverse order (top to bottom visually)
+    # But spatial lookup would be better if available. For now, linear scan is fine for <1000 pellets.
+    if not battle.arena.resources:
+        return None
+        
+    for pellet in reversed(battle.arena.resources):
+        screen_pos = camera.world_to_screen(Vector2D(pellet.x, pellet.y))
+        dx = mouse_pos[0] - screen_pos[0]
+        dy = mouse_pos[1] - screen_pos[1]
+        distance = (dx * dx + dy * dy) ** 0.5
+        
+        # Adjust click radius based on zoom to make it easier to click small pellets
+        # Pellet uses traits.size as multiplier for base radius (default 6)
+        visual_radius = 6.0 * pellet.traits.size
+        adjusted_radius = max(click_radius, visual_radius * camera.zoom * 1.5)
+        
+        if distance <= adjusted_radius:
+            return pellet
     return None
 
 
@@ -348,6 +382,7 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
     )
     event_animator = EventAnimator()
     creature_inspector = CreatureInspector()
+    pellet_inspector = PelletInspector()
     pause_menu = PauseMenu()
     post_game_summary = PostGameSummary()
     font = pygame.font.Font(None, 24)
@@ -431,12 +466,17 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
             if creature_inspector.handle_mouse_event(event, window.screen):
                 continue
 
+            if pellet_inspector.handle_mouse_event(event, window.screen):
+                continue
+
 
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     if creature_inspector.visible and not creature_inspector.is_pinned:
                         creature_inspector.hide()
+                    elif pellet_inspector.visible:
+                        pellet_inspector.hide()
                     else:
                         pause_menu.show()
                         paused = True
@@ -500,7 +540,20 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
                     if clicked_creature:
                         selected_battle_creature = clicked_creature
                         creature_inspector.select_creature(clicked_creature)  # Pass BattleCreature, not just Creature
+                        selected_battle_creature = clicked_creature
+                        creature_inspector.select_creature(clicked_creature)  # Pass BattleCreature, not just Creature
                         print(f"\nSelected: {clicked_creature.creature.name}")
+                        # Deselect pellet if creature selected
+                        pellet_inspector.select_pellet(None)
+                    else:
+                        # Try pellet selection if no creature clicked
+                        clicked_pellet = get_pellet_at_position(mouse_pos, battle, camera)
+                        if clicked_pellet:
+                            pellet_inspector.select_pellet(clicked_pellet)
+                            print(f"\nSelected Pellet: {clicked_pellet.pellet_id}")
+                            # Deselect creature
+                            selected_battle_creature = None
+                            creature_inspector.hide()
 
 
             elif event.type == pygame.MOUSEWHEEL:
@@ -508,6 +561,8 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
                 if creature_inspector.visible and creature_inspector._is_mouse_over_panel():
                     # Only scroll the inspector, don't zoom camera
                     creature_inspector.handle_scroll(-event.y)
+                elif pellet_inspector.visible and pellet_inspector.is_mouse_over(pygame.mouse.get_pos(), window.screen.get_size()):
+                    pellet_inspector.handle_scroll(-event.y)
                 else:
                     # Only zoom camera when not over inspector
                     if event.y > 0:
@@ -611,6 +666,7 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
                 pass
 
         creature_inspector.update(dt)
+        pellet_inspector.update(dt)
         event_animator.update(dt)
         cursor_controller.update(dt, getattr(battle, 'current_time', 0.0))
         try:
@@ -632,6 +688,7 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
                     camera=camera,
                     selected_creature_id=selected_battle_creature.creature.creature_id if selected_battle_creature else None,
                     hovered_creature_id=None,
+                    selected_pellet_id=pellet_inspector.selected_pellet.pellet_id if pellet_inspector.selected_pellet else None,
                     show_debug=False
                 )
                 
@@ -653,6 +710,7 @@ def run_battle_loop(window, battle, injection: Optional[TraitInjectionSystem] = 
                 ui_components.render(window.screen, battle, paused, cursor_controller.cursor)
                 cursor_controller.render_cursor(window.screen, pygame.mouse.get_pos())
                 creature_inspector.render(window.screen)
+                pellet_inspector.render(window.screen)
         except Exception:
             traceback.print_exc()
             pass

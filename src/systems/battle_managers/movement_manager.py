@@ -47,7 +47,7 @@ class MovementManager:
         self.buildings = []  # Will be set by battle system
         
     def set_buildings(self, buildings: List[Any]):
-        """Update the list of structures for collision detection."""
+        """Update the list of buildings for collision detection."""
         self.buildings = buildings
         
     def update_movement(self, creatures: List[Any], delta_time: float):
@@ -105,7 +105,7 @@ class MovementManager:
     
     def _check_barrier_collision(self, creature: Any) -> bool:
         """
-        Check if creature is colliding with any barrier structure tiles.
+        Check if creature is colliding with any barrier building tiles.
         
         Args:
             creature: The BattleCreature to check

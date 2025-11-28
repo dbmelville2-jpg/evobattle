@@ -17,7 +17,6 @@ from .relationships import RelationshipManager
 from .relationship_metrics import AgentTraits, AgentSocialState
 from .injury_tracker import InjuryTracker
 from .interactions import InteractionTracker
-from .interactions import InteractionTracker
 from .combat_memory import CombatMemory
 from .disease import Infection, DiseaseType
 from .spatial import Vector2D
@@ -292,9 +291,8 @@ class Creature:
         
         # Disease System
         self.active_infection: Optional[Infection] = None
-        self.disease_immunity: List[DiseaseType] = [] # Deprecated: Use immune_memory instead
         
-        # New Immunity System
+        # Immunity System
         self.immune_memory: Dict[str, float] = {} # {disease_id: resistance_strength (0.0-1.0)}
         self.base_immunity: float = 0.0 # Base resistance to all diseases (0.0-1.0)
         

@@ -247,7 +247,7 @@ class ScientificIntervention:
                            structure_type: str,
                            position: Tuple[float, float]) -> CreatureBelief:
         """
-        Reward a creature for building a structure.
+        Reward a creature for building a building.
         
         This reinforces building behavior and creates positive beliefs
         about construction.
@@ -255,8 +255,8 @@ class ScientificIntervention:
         Args:
             creature_id: ID of creature
             belief_system: Creature's belief system
-            structure_type: Type of structure built
-            position: Where structure was built
+            structure_type: Type of building built
+            position: Where building was built
             
         Returns:
             CreatureBelief that was created
@@ -779,11 +779,11 @@ class ScientificIntervention:
 
     def create_barrier(self, world_pos: Tuple[float, float], battle: 'SpatialBattle') -> Tuple[bool, str]:
         """
-        Create a temporary barrier structure.
+        Create a temporary barrier building.
         
-        NOTE: Disabled - structures should only be built by creatures through the building system.
+        NOTE: Disabled - buildings should only be built by creatures through the building system.
         """
-        return (False, "Barrier creation disabled - creatures must build structures")
+        return (False, "Barrier creation disabled - creatures must build buildings")
 
     def create_pheromone(self, world_pos: Tuple[float, float], battle: 'SpatialBattle') -> Tuple[bool, str]:
         """

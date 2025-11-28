@@ -143,6 +143,31 @@ class PelletInspector:
         
         return False
     
+    def is_mouse_over(self, mouse_pos: tuple, screen_size: tuple) -> bool:
+        """
+        Check if mouse is hovering over the inspector panel.
+        
+        Args:
+            mouse_pos: (x, y) mouse coordinates
+            screen_size: (width, height) screen dimensions
+            
+        Returns:
+            True if mouse is over the panel
+        """
+        if not self.visible or self.alpha < 10:
+            return False
+            
+        if self.position is None:
+            return False
+            
+        panel_x, panel_y = self.position
+        screen_width, screen_height = screen_size
+        panel_width = int(screen_width * self.panel_width_pct)
+        panel_height = int(screen_height * self.panel_height_pct)
+        
+        rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        return rect.collidepoint(mouse_pos)
+    
     def render(self, screen: pygame.Surface):
         """
         Render the inspector panel.

@@ -22,3 +22,13 @@ AI-powered battle narrative generation system.
 ---
 
 **Note:** Files in this folder are kept for reference but are not part of the active codebase.
+
+## Genetics System (Removed 2025-11-28)
+
+Old genetics system implementation that has been replaced by `GeneticsEngine`.
+
+**Reason for removal:** Replaced by more advanced `GeneticsEngine` in `src/models/genetics.py`.
+
+**Files:**
+- `test_evolution.py` - Tests for the old GeneticsSystem
+- `core_models_example.py` - Example using the old GeneticsSystem

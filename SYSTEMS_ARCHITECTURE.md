@@ -1,7 +1,7 @@
 # EvoBattle Systems Architecture
 **Complete Guide to All Working Features and System Interactions**
 
-> **Last Updated:** 2025-11-25  
+> **Last Updated:** 2025-11-28  
 > **Purpose:** Master reference document explaining how all EvoBattle systems work together
 
 ---
@@ -1085,29 +1085,526 @@ OBSERVATIONAL_BLEND = 0.05  # 5% copy from successful
 
 ---
 
+---
+
+## Advanced Systems
+
+### 18. Building System ✓
+**Files:** `src/models/building/`, `src/systems/battle_managers/building_manager.py`
+
+A fully implemented construction system where creatures gather materials and build structures.
+
+**Building Types:**
+```python
+class BuildingType(Enum):
+    SHELTER = "shelter"           # HP regeneration
+    NEST = "nest"                 # Breeding bonus
+    FOOD_CACHE = "food_cache"     # Food storage
+    WATCHTOWER = "watchtower"     # Vision bonus
+    BARRIER = "barrier"           # Defensive wall
+    WORKSHOP = "workshop"         # Crafting bonus
+```
+
+**Building Components:**
+
+**A. Building Configuration** (`building_config.py`)
+```python
+class Building:
+    building_id: str
+    building_type: BuildingType
+    position: Vector2D
+    completion: float           # 0.0-1.0 (0-100%)
+    durability: float          # Current health
+    max_durability: float      # Max health
+    builder_id: str            # Primary builder
+    contributors: Set[str]     # All builders
+    tiles: List[BuildingTile]  # Individual pieces
+    
+class BuildingBlueprint:
+    required_materials: Dict[MaterialType, int]
+    build_time: float
+    max_durability: float
+    passive_effects: Dict      # e.g., hp_regen_bonus
+```
+
+**B. Building Materials** (`building_material.py`)
+```python
+class MaterialType(Enum):
+    WOOD = "wood"              # From trees
+    STONE = "stone"            # From rocks
+    PLANT_FIBER = "plant_fiber" # From grass
+    ORGANIC = "organic"        # From creature remains
+
+class BuildingMaterial:
+    material_type: MaterialType
+    position: Vector2D
+    weight: float              # Affects carry speed
+    durability_value: int      # Contribution to building
+    rarity: float             # Spawn frequency
+```
+
+**C. Building Behavior** (`building_behavior.py`)
+
+**Trait-Based Building Priority:**
+```python
+# Creatures need "Builder" trait to initiate construction
+if creature.has_trait("Builder"):
+    priority_modifier = 1.5
+else:
+    priority_modifier = 0.0  # Cannot build
+
+# Personality affects building focus
+if personality.patience > 0.7:
+    priority_modifier *= 1.3  # Patient creatures build more
+
+# Negative traits reduce priority
+if creature.has_trait("Lazy"):
+    priority_modifier *= 0.5
+if creature.has_trait("Aggressive"):
+    priority_modifier *= 0.7
+if creature.has_trait("Wanderer"):
+    priority_modifier *= 0.6
+```
+
+**Building Needs:**
+```python
+class BuildingNeed(Enum):
+    SHELTER = "shelter"        # Low HP → build shelter
+    BREEDING_SPACE = "breeding" # Mature → build nest
+    FOOD_STORAGE = "storage"   # Excess food → build cache
+    DEFENSE = "defense"        # Under attack → build barrier
+```
+
+**Construction Process:**
+```python
+def construction_workflow():
+    # 1. Identify need
+    if creature.hp < 0.5 * max_hp:
+        need = BuildingNeed.SHELTER
+    
+    # 2. Select building site
+    site = find_safe_location()
+    
+    # 3. Create building task
+    task = BuildingTask(
+        building_type=SHELTER,
+        target_position=site,
+        state=GATHERING_MATERIALS
+    )
+    
+    # 4. Gather materials
+    for material_type, count in blueprint.required_materials:
+        material = find_nearest_material(material_type)
+        carry_to_site(material, site)
+    
+    # 5. Construct building
+    while completion < 1.0:
+        add_tile()
+        completion += delta_progress
+    
+    # 6. Building complete
+    building.active = True
+    apply_passive_effects()
+```
+
+**Building Manager Responsibilities:**
+- Spawn materials periodically (wood, stone, fiber)
+- Track all active buildings and construction tasks
+- Handle building decay over time
+- Manage material carrying and deposits
+- Coordinate multi-creature construction
+- Apply building passive effects (HP regen, breeding bonus, etc.)
+
+---
+
+### 19. Event Logger System ✓
+**File:** `src/systems/event_logger.py`
+
+Comprehensive event tracking and logging system for game analysis.
+
+**Tracked Events:**
+- **Births:** Creature spawns, parents, strain
+- **Deaths:** Cause of death, killer, age
+- **Combat:** Attacks, damage, kills
+- **Foraging:** Food collection, starvation
+- **Building:** Construction progress, completion
+- **Disease:** Infections, deaths, outbreaks
+- **Breeding:** Reproduction events, offspring
+
+**Event Logger Features:**
+```python
+class EventLogger:
+    def __init__(self):
+        self.events = []
+        self.session_start = time.time()
+        self.log_file = None
+        
+    def log_event(self, category, message, details=None):
+        """Log event to console and file"""
+        timestamp = time.time() - self.session_start
+        event = {
+            'time': timestamp,
+            'category': category,
+            'message': message,
+            'details': details
+        }
+        
+        # Console output
+        print(f"[{timestamp:.1f}s] {category}: {message}")
+        
+        # File output
+        if self.log_file:
+            self.log_file.write(f"{event}\n")
+    
+    def generate_summary(self):
+        """Generate session summary"""
+        return {
+            'total_births': count_events('birth'),
+            'total_deaths': count_events('death'),
+            'total_kills': count_events('kill'),
+            'total_food_collected': count_events('forage'),
+            'buildings_completed': count_events('building_complete'),
+            'session_duration': time.time() - self.session_start
+        }
+```
+
+**Integration:**
+```python
+# Battle system emits events
+event_logger.log_event('birth', f"{creature.name} born", {
+    'strain': creature.strain_id,
+    'parents': [parent1.name, parent2.name]
+})
+
+event_logger.log_event('death', f"{creature.name} died", {
+    'cause': 'combat',
+    'killer': killer.name,
+    'age': creature.age
+})
+
+event_logger.log_event('building', f"Shelter completed", {
+    'builder': creature.name,
+    'location': building.position
+})
+```
+
+**Output:**
+- Real-time console logging
+- Session log file with timestamps
+- End-of-session summary report
+- Unicode handling for Windows compatibility
+
+---
+
+### 20. Social Skills System ✓
+**Integration:** `src/models/skills.py`, Combat System
+
+Advanced combat skills based on social dynamics.
+
+**Skill Types:**
+
+**A. Teamwork**
+```python
+# Damage bonus when allies nearby
+def calculate_teamwork_bonus(attacker, allies_nearby):
+    if attacker.skills.has_skill("Teamwork"):
+        skill_level = attacker.skills.get_level("Teamwork")
+        ally_count = len(allies_nearby)
+        bonus = 1.0 + (skill_level * 0.05 * ally_count)
+        return min(bonus, 1.5)  # Max 50% bonus
+    return 1.0
+```
+
+**B. Intimidation**
+```python
+# Damage bonus from aggression
+def calculate_intimidation_bonus(attacker):
+    if attacker.skills.has_skill("Intimidation"):
+        skill_level = attacker.skills.get_level("Intimidation")
+        aggression = attacker.personality.aggression
+        bonus = 1.0 + (skill_level * 0.03 * aggression)
+        return bonus
+    return 1.0
+```
+
+**C. Leadership**
+```python
+# Buff nearby allies
+def apply_leadership_buff(leader, allies_nearby):
+    if leader.skills.has_skill("Leadership"):
+        skill_level = leader.skills.get_level("Leadership")
+        buff_strength = skill_level * 0.1  # 10% per level
+        
+        for ally in allies_nearby:
+            ally.stats.add_modifier(StatModifier(
+                name="Leadership Buff",
+                duration=5.0,
+                attack_multiplier=1.0 + buff_strength,
+                defense_multiplier=1.0 + buff_strength
+            ))
+```
+
+**Skill Progression:**
+- Skills improve through use
+- Teamwork levels up when fighting with allies
+- Intimidation levels up on successful kills
+- Leadership levels up when allies survive nearby
+
+**Combat Integration:**
+```python
+def calculate_damage(attacker, target, base_damage):
+    damage = base_damage
+    
+    # Apply social skills
+    allies = get_nearby_allies(attacker)
+    damage *= calculate_teamwork_bonus(attacker, allies)
+    damage *= calculate_intimidation_bonus(attacker)
+    
+    # Leader buffs already applied to stats
+    
+    return damage
+```
+
+---
+
+### 21. Battle Manager Architecture ✓
+**Directory:** `src/systems/battle_managers/`
+
+Refactored architecture separating `battle_spatial.py` into specialized managers.
+
+**Manager Responsibilities:**
+
+**A. AI Manager** (`ai_manager.py`)
+- Handles creature decision-making
+- Routes to neural brain or attention system
+- Manages AI update batching and staggering
+
+**B. Building Manager** (`building_manager.py`)
+- Spawns building materials
+- Tracks construction tasks
+- Handles material carrying and deposits
+- Manages building decay
+- Applies building passive effects
+
+**C. Combat Manager** (`combat_manager.py`)
+- Processes attack attempts
+- Calculates damage with all modifiers
+- Handles attack cooldowns
+- Applies combat effects
+- Manages skill progression
+
+**D. Cooperative Resources** (`cooperative_resources.py`)
+- Manages resources requiring multiple creatures
+- Coordinates group harvesting
+- Tracks contribution and rewards
+
+**E. Environment Manager** (`environment_manager.py`)
+- Updates weather and day/night cycle
+- Manages terrain effects
+- Handles environmental hazards
+- Applies environmental damage
+
+**F. Event Manager** (`event_manager.py`)
+- Central event bus for system communication
+- Publishes events to subscribers
+- Decouples systems for modularity
+
+**G. Lifecycle Manager** (`lifecycle_manager.py`)
+- Handles creature births
+- Processes creature deaths
+- Manages population limits
+- Tracks strain populations
+
+**H. Movement Manager** (`movement_manager.py`)
+- Updates creature positions
+- Handles physics and collision
+- Applies separation forces
+- Manages boundary clamping
+- Updates spatial grid
+
+**I. Neural Manager** (`neural_manager.py`)
+- Updates neural networks
+- Applies learning rewards
+- Handles observational learning
+- Manages brain inheritance
+
+**J. Resource Manager** (`resource_manager.py`)
+- Spawns pellets (food resources)
+- Handles pellet reproduction
+- Manages grass growth system
+- Processes pellet collection
+
+**Manager Coordination:**
+```python
+class SpatialBattle:
+    def __init__(self):
+        # Initialize all managers
+        self.ai_manager = AIManager(self)
+        self.building_manager = BuildingManager(self)
+        self.combat_manager = CombatManager(self)
+        self.environment_manager = EnvironmentManager(self)
+        self.event_manager = EventManager()
+        self.lifecycle_manager = LifecycleManager(self)
+        self.movement_manager = MovementManager(self)
+        self.neural_manager = NeuralManager(self)
+        self.resource_manager = ResourceManager(self)
+    
+    def update(self, delta_time):
+        # Coordinated update sequence
+        self.environment_manager.update(delta_time)
+        self.ai_manager.update(delta_time)
+        self.movement_manager.update(delta_time)
+        self.combat_manager.update(delta_time)
+        self.resource_manager.update(delta_time)
+        self.building_manager.update(delta_time)
+        self.lifecycle_manager.update(delta_time)
+        self.neural_manager.update(delta_time)
+```
+
+**Benefits:**
+- ✅ Separation of concerns
+- ✅ Easier testing and debugging
+- ✅ Modular feature toggling
+- ✅ Clearer code organization
+- ✅ Reduced file complexity
+
+---
+
+### 22. UI Inspector Systems ✓
+**Files:** `src/rendering/creature_inspector.py`, `src/rendering/pellet_inspector.py`
+
+Interactive inspection panels for detailed entity information.
+
+**A. Creature Inspector**
+
+**Features:**
+- Click any creature to inspect
+- Scrollable panel for long content
+- Auto-hide when clicking elsewhere
+- Comprehensive information display
+
+**Displayed Information:**
+```python
+# Basic Info
+- Name, Strain ID, Age
+- HP, Energy, Hunger
+
+# Stats
+- Attack, Defense, Speed
+- Active modifiers (buffs/debuffs)
+
+# Traits
+- All genetic traits
+- Trait effects
+
+# Skills
+- Skill levels and progress
+- Recent skill improvements
+
+# Personality
+- All 7 personality traits
+- Behavioral tendencies
+
+# Relationships
+- Parents, children, siblings
+- Allies, rivals, revenge targets
+
+# History
+- Battles fought, kills
+- Damage dealt/received
+- Offspring count
+- Achievements
+
+# Disease Status
+- Active infection
+- Infection stage
+- Disease effects
+
+# Current Focus
+- Attention system focus
+- Target entity
+- Priority scores
+```
+
+**Interaction:**
+```python
+# Click to select
+if mouse_click:
+    creature = get_creature_at_position(mouse_pos)
+    if creature:
+        inspector.show(creature)
+
+# Scroll to view
+if inspector.visible:
+    inspector.handle_scroll(scroll_delta)
+
+# Click elsewhere to hide
+if mouse_click and not inspector.contains(mouse_pos):
+    inspector.hide()
+```
+
+**B. Pellet Inspector**
+
+**Features:**
+- Click pellets to inspect
+- Shows detailed nutritional information
+- Displays evolutionary history
+- Strain and generation tracking
+
+**Displayed Information:**
+```python
+# Basic Info
+- Pellet ID, Strain ID
+- Generation number
+- Age
+
+# Nutrition
+- Food value (hunger restored)
+- Toxicity level
+- Palatability rating
+
+# Traits
+- Size modifier
+- Growth rate
+- Reproduction cooldown
+
+# Lifecycle
+- Times targeted by creatures
+- Times successfully eaten
+- Survival rate
+
+# Evolutionary History
+- Parent pellet
+- Mutations from parent
+- Offspring count
+```
+
+**Rendering:**
+- Panels rendered on top of game view
+- Semi-transparent background
+- Scrollbar for overflow content
+- Highlight selected entity
+
+---
+
 ## Future Expansion Points
 
 ### Planned Systems
 
-1. **Building System** (Partially Implemented)
-   - Creatures gather materials
-   - Construct shelters
-   - Defensive structures
-
-2. **Advanced Disease Evolution**
+1. **Advanced Disease Evolution**
    - Cross-species transmission
    - Immunity development
    - Epidemic events
 
-3. **Seasonal Cycles**
+2. **Seasonal Cycles**
    - Migration patterns
    - Hibernation
    - Resource scarcity
 
-4. **Social Structures**
+3. **Enhanced Social Structures**
    - Pack formation
    - Hierarchy systems
-   - Cooperative hunting
+   - Advanced cooperative hunting
 
 ---
 

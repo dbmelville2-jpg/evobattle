@@ -92,8 +92,7 @@ class TestResourceSystem(unittest.TestCase):
         creature2 = Creature(name="C2")
         
         battle = SpatialBattle(
-            [creature1],
-            [creature2],
+            [creature1, creature2],
             initial_resources=5
         )
         
@@ -105,8 +104,7 @@ class TestResourceSystem(unittest.TestCase):
         creature2 = Creature(name="C2")
         
         battle = SpatialBattle(
-            [creature1],
-            [creature2],
+            [creature1, creature2],
             resource_spawn_rate=1.0,  # 1 per second
             initial_resources=0
         )
@@ -125,17 +123,16 @@ class TestResourceSystem(unittest.TestCase):
         creature2 = Creature(name="C2")
         
         battle = SpatialBattle(
-            [creature1],
-            [creature2],
+            [creature1, creature2],
             initial_resources=0
         )
         
         # Manually place a resource near player creature
-        player_pos = battle.player_creatures[0].spatial.position
+        player_pos = battle.creatures[0].spatial.position
         resource_pos = Vector2D(player_pos.x + 1, player_pos.y)
         battle.arena.add_resource(resource_pos)
         
-        initial_hunger = battle.player_creatures[0].creature.hunger
+        initial_hunger = battle.creatures[0].creature.hunger
         
         # Update battle - creature should move toward and collect resource
         for _ in range(20):  # Multiple updates to allow movement
@@ -143,7 +140,7 @@ class TestResourceSystem(unittest.TestCase):
         
         # Resource should be collected and hunger increased
         self.assertEqual(len(battle.arena.resources), 0)
-        self.assertGreater(battle.player_creatures[0].creature.hunger, initial_hunger)
+        self.assertGreater(battle.creatures[0].creature.hunger, initial_hunger)
 
 
 class TestHungerDrivenBehavior(unittest.TestCase):
@@ -155,24 +152,23 @@ class TestHungerDrivenBehavior(unittest.TestCase):
         enemy_creature = Creature(name="Enemy")
         
         battle = SpatialBattle(
-            [hungry_creature],
-            [enemy_creature],
+            [hungry_creature, enemy_creature],
             initial_resources=1
         )
         
         # Place resource and enemy at different locations
-        player_pos = battle.player_creatures[0].spatial.position
+        player_pos = battle.creatures[0].spatial.position
         battle.arena.resources[0] = Vector2D(player_pos.x - 10, player_pos.y)
         
-        enemy_pos = battle.enemy_creatures[0].spatial.position
+        enemy_pos = battle.creatures[1].spatial.position
         # Move enemy far away
-        battle.enemy_creatures[0].spatial.position = Vector2D(player_pos.x + 50, player_pos.y)
+        battle.creatures[1].spatial.position = Vector2D(player_pos.x + 50, player_pos.y)
         
         # Update - hungry creature should move toward food, not enemy
         initial_distance_to_food = player_pos.distance_to(battle.arena.resources[0])
         battle.update(0.5)
         
-        new_player_pos = battle.player_creatures[0].spatial.position
+        new_player_pos = battle.creatures[0].spatial.position
         new_distance_to_food = new_player_pos.distance_to(battle.arena.resources[0])
         
         # Should be moving toward food
@@ -184,13 +180,12 @@ class TestHungerDrivenBehavior(unittest.TestCase):
         enemy_creature = Creature(name="Enemy")
         
         battle = SpatialBattle(
-            [well_fed_creature],
-            [enemy_creature],
+            [well_fed_creature, enemy_creature],
             initial_resources=1
         )
         
         # Well-fed creature should not be seeking food urgently
-        player = battle.player_creatures[0]
+        player = battle.creatures[0]
         self.assertGreaterEqual(player.creature.hunger, 40)
 
 

@@ -533,8 +533,8 @@ class TraitEffectsHandler:
                     modifier *= (1.0 + effects['construction_speed_bonus'])
                     
             elif stat_type == 'durability':
-                if effects.get('structure_durability_bonus'):
-                    modifier *= effects['structure_durability_bonus']
+                if effects.get('building_durability_bonus'):
+                    modifier *= effects['building_durability_bonus']
                     
             elif stat_type == 'carry_capacity':
                 if effects.get('carry_capacity_multiplier'):

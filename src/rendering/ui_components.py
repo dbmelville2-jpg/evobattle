@@ -302,17 +302,7 @@ class UIComponents:
                     self.popup_scroll_offset = 0 # Reset scroll
                 return True
 
-            # 5. Check Overseer Panel clicks
-            if hasattr(self, 'overseer_btn_rects') and battle.overseer:
-                from ..systems.experiment_overseer_system import ProtocolType
-                for p_value, rect in self.overseer_btn_rects.items():
-                    if rect.collidepoint(mouse_pos):
-                        try:
-                            p_type = ProtocolType(p_value)
-                            battle.overseer.execute_protocol(p_type)
-                        except Exception as e:
-                            print(f"Protocol Error: {e}")
-                        return True
+
 
         elif event.type == pygame.MOUSEBUTTONUP:
             self._pressed_button = None
@@ -2338,112 +2328,7 @@ class UIComponents:
 
         return rects
 
-    def _render_overseer_panel(self, screen: pygame.Surface, battle: SpatialBattle):
-        """
-        Render the Experiment Overseer Control Panel.
-        
-        Displays Bio-Data and Protocol buttons.
-        Positioned on the right side of the screen.
-        """
-        overseer = battle.overseer
-        screen_width = screen.get_width()
-        screen_height = screen.get_height()
-        
-        # Position at bottom center of screen
-        panel_width = 600
-        panel_height = 120
-        panel_x = (screen_width - panel_width) // 2
-        panel_y = screen_height - panel_height - 10
-        
-        if not self._render_panel_container(screen, panel_x, panel_y, panel_width, panel_height, "EXPERIMENT CONTROLS", "overseer"):
-            return
-        
-        # Header: Bio-Data
-        header_y = panel_y + 30 # Adjusted for container header
-        
-        # Bio-Data Gauge
-        data_y = header_y + 5
-        data_text = f"BIO-DATA: {int(overseer.bio_data)}/{int(overseer.max_bio_data)}"
-        data_surf = self._get_cached_text(data_text, self.text_font, (255, 255, 255))
-        screen.blit(data_surf, (panel_x + 20, data_y))
-        
-        # Bar
-        bar_x = panel_x + 20
-        bar_y = data_y + 25
-        bar_w = panel_width - 40
-        bar_h = 10
-        
-        pct = overseer.bio_data / overseer.max_bio_data
-        pygame.draw.rect(screen, (50, 50, 50), (bar_x, bar_y, bar_w, bar_h))
-        pygame.draw.rect(screen, (0, 255, 255), (bar_x, bar_y, bar_w * pct, bar_h))
-        
-        # Protocols - Horizontal layout
-        btn_start_x = panel_x + 10
-        btn_y = bar_y + 20
-        btn_width = 110
-        btn_height = 35
-        btn_margin = 8
-        
-        mouse_pos = pygame.mouse.get_pos()
-        
-        # Ensure we have rects for input handling
-        if not hasattr(self, 'overseer_btn_rects'):
-            self.overseer_btn_rects = {}
-            
-        self.overseer_btn_rects = {} # Reset for this frame
-        
-        btn_x = btn_start_x
-        for p_type, protocol in overseer.protocols.items():
-            btn_rect = pygame.Rect(btn_x, btn_y, btn_width, btn_height)
-            self.overseer_btn_rects[p_type.value] = btn_rect
-            
-            # Determine state
-            is_hover = btn_rect.collidepoint(mouse_pos)
-            can_afford = overseer.bio_data >= protocol.cost
-            on_cooldown = protocol.current_cooldown > 0
-            
-            # Colors
-            if on_cooldown:
-                bg_color = (50, 30, 30)
-                border_color = (100, 50, 50)
-                text_color = (150, 100, 100)
-            elif not can_afford:
-                bg_color = (30, 30, 30)
-                border_color = (80, 80, 80)
-                text_color = (100, 100, 100)
-            elif is_hover:
-                bg_color = (0, 60, 60)
-                border_color = (0, 255, 255)
-                text_color = (255, 255, 255)
-            else:
-                bg_color = (0, 40, 40)
-                border_color = (0, 150, 150)
-                text_color = (200, 255, 255)
-                
-            # Draw Button
-            pygame.draw.rect(screen, bg_color, btn_rect, border_radius=5)
-            pygame.draw.rect(screen, border_color, btn_rect, 1, border_radius=5)
-            
-            # Text - compact layout
-            name_surf = self._get_cached_text(protocol.name, self.small_font, text_color)
-            screen.blit(name_surf, (btn_rect.x + 5, btn_rect.y + 3))
-            
-            cost_text = f"{protocol.cost}"
-            cost_surf = self._get_cached_text(cost_text, self.small_font, text_color)
-            screen.blit(cost_surf, (btn_rect.x + 5, btn_rect.y + 18))
-            
-            # Cooldown overlay or status
-            if on_cooldown:
-                cd_text = f"{protocol.current_cooldown:.1f}s"
-                cd_surf = self._get_cached_text(cd_text, self.small_font, (255, 100, 100))
-                screen.blit(cd_surf, (btn_rect.right - cd_surf.get_width() - 5, btn_rect.y + 18))
-            else:
-                # Description on hover (tooltip style)
-                if is_hover:
-                    # Render tooltip below or to the side
-                    pass
-            
-            btn_x += btn_width + btn_margin
+
 
     def render_dilemma_popup(self, screen: pygame.Surface, dilemma):
         """

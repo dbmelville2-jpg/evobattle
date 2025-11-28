@@ -125,6 +125,7 @@ class ArenaRenderer:
         camera=None,
         selected_creature_id: str = None,
         hovered_creature_id: str = None,
+        selected_pellet_id: str = None,
         show_debug: bool = False
     ):
         """
@@ -136,6 +137,7 @@ class ArenaRenderer:
             camera: Camera instance for view transformation
             selected_creature_id: ID of currently selected creature
             hovered_creature_id: ID of currently hovered creature
+            selected_pellet_id: ID of currently selected pellet
             show_debug: Whether to show debug visuals
         """
         # If no camera provided, create a dummy one (fallback)
@@ -157,7 +159,7 @@ class ArenaRenderer:
         # 4. Draw Resources (Pellets)
         # Use specialized pellet renderer if available
         if self.pellet_renderer:
-            self.pellet_renderer.render(screen, battle.arena.resources, camera)
+            self.pellet_renderer.render(screen, battle.arena.resources, camera, selected_pellet_id)
         else:
             # Fallback rendering
             for pellet in battle.arena.resources:
@@ -213,13 +215,10 @@ class ArenaRenderer:
         # 7. Draw Arena Border
         self._render_border(screen, battle.arena.width, battle.arena.height, camera)
         
-        # 8. Draw Structures & Materials
-        if self.building_renderer:
-            if hasattr(battle, 'structures'):
-                self.building_renderer.render_buildings(screen, battle.buildings, battle.arena, camera)
-                
-            if hasattr(battle, 'materials'):
-                self.building_renderer.render_materials(screen, battle.materials, battle.arena, camera)
+        # 8. Draw Buildings & Materials
+        if self.building_renderer and hasattr(battle, 'building_manager'):
+            self.building_renderer.render_buildings(screen, battle.building_manager.buildings, battle.arena, camera)
+            self.building_renderer.render_materials(screen, battle.building_manager.materials, battle.arena, camera)
 
     def _render_terrain(self, screen: pygame.Surface, battle: SpatialBattle, camera):
         """Render the terrain background."""

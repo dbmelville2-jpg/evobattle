@@ -43,6 +43,7 @@ from src.systems.research_ethics import ResearchEthicsSystem
 from .reward_tracker import RewardTracker
 from .neural_observational_learning import NeuralObservationalLearning
 from .brain_statistics import BrainStatistics
+from .event_logger import EventLogger, EventCategory
 
 
 from .battle_events import BattleEvent, BattleEventType
@@ -215,8 +216,7 @@ class SpatialBattle:
     
     def __init__(
         self,
-        creatures_or_team1: List[Creature],
-        team2_or_none: Optional[List[Creature]] = None,
+        creatures: List[Creature],
         arena_width: float = 100.0,
         arena_height: float = 100.0,
         random_seed: Optional[int] = None,
@@ -232,8 +232,7 @@ class SpatialBattle:
         Initialize a new spatial battle.
         
         Args:
-            creatures_or_team1: Either a list of all creatures (new API) or player team (old API)
-            team2_or_none: Enemy team if using old API, None for new API
+            creatures: List of all creatures in the battle
             arena_width: Width of the battle arena
             arena_height: Height of the battle arena
             random_seed: Optional seed for reproducible randomness
@@ -245,14 +244,6 @@ class SpatialBattle:
             enable_environment: Enable environmental simulation (weather, terrain, day/night)
             biome_type: Optional biome type ('grassland', 'desert', 'forest', 'marsh', 'rocky_highlands', 'mixed', 'random')
         """
-        # Handle backward compatibility - detect old two-team API
-        if team2_or_none is not None:
-            # Old API: two teams passed separately
-            all_creatures = creatures_or_team1 + team2_or_none
-        else:
-            # New API: single list of creatures
-            all_creatures = creatures_or_team1
-        
         # Core initialization
         self.arena = Arena(arena_width, arena_height)
         self.event_manager = EventManager()
@@ -315,18 +306,24 @@ class SpatialBattle:
             creature_grid=self.creature_grid,
             spawn_rate=resource_spawn_rate,
             initial_resources=initial_resources,
-            enable_growth_system=True
+            enable_growth_system=True,
+            event_logger=None  # Will be set after event_logger is created
         )
         # Lifecycle Manager handles birth, death, breeding
+        # Note: event_logger will be set after initialization
         self.lifecycle_manager = LifecycleManager(
             event_manager=self.event_manager,
             resource_manager=self.resource_manager,
             arena=self.arena,
             creature_grid=self.creature_grid,
             breeding_system=self.breeding_system,
-            enhancer=self.enhancer if hasattr(self, 'enhancer') else None,
-            reward_tracker=None # Will be set later
+            enhancer=self.enhancer
         )
+        
+
+        
+        # Expose creatures list from LifecycleManager
+        # This is a property delegation, see @property creatures below
         
         # Trait effects handler for applying interaction_effects
         self.trait_effects = TraitEffectsHandler()
@@ -336,7 +333,8 @@ class SpatialBattle:
             event_manager=self.event_manager,
             combat_config=self.combat_config,
             trait_effects_handler=self.trait_effects,
-            enhancer=self.enhancer if hasattr(self, 'enhancer') else None
+            enhancer=self.enhancer if hasattr(self, 'enhancer') else None,
+            event_logger=None  # Will be set after event_logger is created
         )
         
         # Movement Manager handles physics and positioning
@@ -357,13 +355,10 @@ class SpatialBattle:
             random.seed(random_seed)
         
         # Spawn creatures distributed throughout the arena
-        self._creatures = self.lifecycle_manager.spawn_population(all_creatures, BattleCreature)
+        self._creatures = self.lifecycle_manager.spawn_population(creatures, BattleCreature)
         self.active_creatures = list(self._creatures)
         
-        # Initialize Experiment Overseer System
-        # Import here to avoid circular dependency
-        from .experiment_overseer_system import ExperimentOverseer
-        self.overseer = ExperimentOverseer(self)
+
         
         # Initialize Scientific Systems
         self.ethics_system = ResearchEthicsSystem()
@@ -400,7 +395,7 @@ class SpatialBattle:
             combat_config=self.combat_config
         )
         
-        # Building Manager handles structures and materials
+        # Building Manager handles buildings and materials
         from .battle_managers.building_manager import BuildingManager
         self.building_manager = BuildingManager(
             event_manager=self.event_manager,
@@ -410,83 +405,27 @@ class SpatialBattle:
         # Link Building Manager to AI Manager
         self.ai_manager.set_building_manager(self.building_manager)
         
-        self._log(f"Battle started: {len(all_creatures)} creatures in {arena_width}x{arena_height} arena")
-    
-    @property
-    def structures(self) -> List[Any]:
-        """Get all structures in the arena."""
-        return self.building_manager.buildings
-    
-    @property
-    def buildings(self) -> List[Any]:
-        """Get all buildings in the arena."""
-        return self.building_manager.buildings
+        # Event Logger for comprehensive game observation
+        self.event_logger = EventLogger(log_to_console=True, log_to_file=True)
         
-    @property
-    def materials(self) -> List[Any]:
-        """Get all building materials in the arena."""
-        return self.building_manager.materials
-
-    
-
-    
-    def add_event_callback(self, callback: Callable[[BattleEvent], None]):
-        """Register a callback function for battle events."""
-        self.event_manager.add_callback(callback)
-    
-    @property
-    def creatures(self) -> List[BattleCreature]:
-        """
-        Get all creatures in the battle.
+        # Connect event logger to managers
+        self.lifecycle_manager.event_logger = self.event_logger
+        self.combat_manager.event_logger = self.event_logger
+        self.resource_manager.event_logger = self.event_logger
         
-        Returns:
-            List of all BattleCreatures in the population
-        """
+        self._log(f"Battle started: {len(creatures)} creatures in {arena_width}x{arena_height} arena")
+    
+    @property
+    def creatures(self):
+        """Get the list of all creatures (alive and dead)."""
         return self._creatures
     
     @property
-    def player_creatures(self) -> List[BattleCreature]:
-        """
-        Backward compatibility property for accessing creatures.
-        Returns first half of creatures (simulating old "player team").
-        
-        This property exists for compatibility with old code but will be deprecated.
-        Use the 'creatures' property instead.
-        """
-        # For backward compatibility, split the list in half
-        mid = len(self._creatures) // 2
-        return self._creatures[:mid] if mid > 0 else self._creatures
+    def events(self):
+        """Get the list of battle events."""
+        return self.event_manager.get_events()
     
-    @property
-    def enemy_creatures(self) -> List[BattleCreature]:
-        """
-        Backward compatibility property for accessing creatures.
-        Returns second half of creatures (simulating old "enemy team").
-        
-        This property exists for compatibility with old code but will be deprecated.
-        Use the 'creatures' property instead.
-        """
-        # For backward compatibility, split the list in half
-        mid = len(self._creatures) // 2
-        return self._creatures[mid:] if mid > 0 else []
     
-    def _emit_event(self, event: BattleEvent):
-        """Emit a battle event to all registered callbacks."""
-        self.event_manager.emit_event(event)
-    
-    def _log(self, message: str):
-        """Add a message to the battle log."""
-        self.event_manager.log(message)
-        
-    @property
-    def events(self) -> List[BattleEvent]:
-        """
-        Backward compatibility property for accessing events.
-        Delegates to event_manager.events.
-        """
-        return self.event_manager.events
-    
-
     
     def update(self, delta_time: float):
         """
@@ -505,18 +444,16 @@ class SpatialBattle:
         # Update environmental simulation
         self.environment_manager.update(delta_time)
         
-        # Update Building System (Structures, Decay, Spawning)
+        # Update Building System (Buildings, Decay, Spawning)
         weather_type = "clear"
         if self.environment_manager.environment and self.environment_manager.environment.weather:
             weather_type = self.environment_manager.environment.weather.weather_type.value
         self.building_manager.update(delta_time, self.current_time, weather_type)
         
-        # Update movement manager with current structures for collision detection
+        # Update movement manager with current buildings for collision detection
         self.movement_manager.set_buildings(self.building_manager.buildings)
             
-        # Update Experiment Overseer
-        if hasattr(self, 'overseer') and self.overseer:
-            self.overseer.update(delta_time)
+
         
         # Update resource manager
         self.resource_manager.update(delta_time)
@@ -739,6 +676,10 @@ class SpatialBattle:
         self.is_over = True
         alive_creatures = [c for c in self._creatures if c.is_alive()]
         self.lifecycle_manager.check_battle_end(alive_creatures)
+        
+        # Close event logger and generate summary
+        if hasattr(self, 'event_logger') and self.event_logger:
+            self.event_logger.close(self.current_time)
     
     def simulate(self, duration: float = 60.0, time_step: float = 0.1) -> Optional[str]:
         """
@@ -781,6 +722,19 @@ class SpatialBattle:
 
         
 
+    
+    
+    def _log(self, message: str):
+        """Internal logging helper."""
+        self.event_manager.log(message)
+    
+    def _emit_event(self, event):
+        """Internal event emission helper."""
+        self.event_manager.emit_event(event)
+    
+    def add_event_callback(self, callback):
+        """Register a callback for battle events."""
+        self.event_manager.add_callback(callback)
     
     def get_battle_log(self) -> List[str]:
         """Get the complete battle log."""

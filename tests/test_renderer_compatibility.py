@@ -42,23 +42,10 @@ class TestRendererCompatibility(unittest.TestCase):
             Creature(name="Enemy3", creature_type=warrior_type)
         ]
     
-    def test_creatures_property_exists(self):
-        """Test that SpatialBattle has a creatures property."""
-        battle = SpatialBattle(
-            self.team1,
-            self.team2,
-            arena_width=100,
-            arena_height=100
-        )
-        
-        # Should not raise AttributeError
-        self.assertTrue(hasattr(battle, 'creatures'))
-    
     def test_creatures_property_returns_all_creatures(self):
-        """Test that creatures property returns all creatures from both teams."""
+        """Test that creatures property returns all creatures."""
         battle = SpatialBattle(
-            self.team1,
-            self.team2,
+            self.team1 + self.team2,
             arena_width=100,
             arena_height=100
         )
@@ -66,16 +53,11 @@ class TestRendererCompatibility(unittest.TestCase):
         # Should return all creatures
         all_creatures = battle.creatures
         self.assertEqual(len(all_creatures), 5)  # 2 + 3
-        
-        # Should contain both teams
-        self.assertEqual(len(battle.player_creatures), 2)
-        self.assertEqual(len(battle.enemy_creatures), 3)
     
     def test_creatures_property_is_iterable(self):
         """Test that creatures property can be iterated over."""
         battle = SpatialBattle(
-            self.team1,
-            self.team2,
+            self.team1 + self.team2,
             arena_width=100,
             arena_height=100
         )
@@ -91,8 +73,7 @@ class TestRendererCompatibility(unittest.TestCase):
     def test_renderer_access_pattern(self):
         """Test the typical renderer access pattern."""
         battle = SpatialBattle(
-            self.team1,
-            self.team2,
+            self.team1 + self.team2,
             arena_width=100,
             arena_height=100
         )
@@ -111,8 +92,7 @@ class TestRendererCompatibility(unittest.TestCase):
         from src.rendering.creature_renderer import CreatureRenderer
         
         battle = SpatialBattle(
-            self.team1,
-            self.team2,
+            self.team1 + self.team2,
             arena_width=100,
             arena_height=100
         )
@@ -155,8 +135,7 @@ class TestRendererCompatibility(unittest.TestCase):
         from src.models.spatial import Vector2D
         
         battle = SpatialBattle(
-            self.team1,
-            self.team2,
+            self.team1 + self.team2,
             arena_width=100,
             arena_height=60
         )

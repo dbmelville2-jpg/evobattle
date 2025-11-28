@@ -18,7 +18,7 @@ These documents are the primary references for the game's systems:
 
 ### Technical Documentation
 - [SYSTEMS_ARCHITECTURE.md](SYSTEMS_ARCHITECTURE.md) - **NEW!** Complete guide to all systems and their interactions
-- [MODELS_DOCUMENTATION.md](MODELS_DOCUMENTATION.md) - Core models (Creature, stats, abilities)
+- [MODELS_FOLDER_SUMMARY.md](MODELS_FOLDER_SUMMARY.md) - Core models overview (Creature, stats, abilities, building system)
 - [RENDERING_DOCUMENTATION.md](RENDERING_DOCUMENTATION.md) - Visual rendering and animation systems
 
 ### Special Features
@@ -30,7 +30,6 @@ These documents are the primary references for the game's systems:
 ### Development
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
 - [AGENT_COORDINATION.md](AGENT_COORDINATION.md) - Team standards and integration goals
-- [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md) - Implementation progress tracking
 - [TEST_STATUS.md](TEST_STATUS.md) - Test suite status
 
 ## Archived Documentation

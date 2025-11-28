@@ -48,7 +48,7 @@ class PelletRenderer:
         self.tiny_font = pygame.font.Font(None, 12)
         self.small_font = pygame.font.Font(None, 16)
     
-    def render(self, screen: pygame.Surface, pellets: list, camera):
+    def render(self, screen: pygame.Surface, pellets: list, camera, selected_pellet_id: str = None):
         """
         Render all pellets in the battle.
         
@@ -56,16 +56,19 @@ class PelletRenderer:
             screen: Pygame surface to draw on
             pellets: List of pellets to render
             camera: Camera instance for coordinate transformation
+            selected_pellet_id: ID of the currently selected pellet
         """
         # Render each pellet
         for pellet in pellets:
-            self._render_pellet(screen, pellet, camera)
+            is_selected = (pellet.pellet_id == selected_pellet_id)
+            self._render_pellet(screen, pellet, camera, is_selected)
     
     def _render_pellet(
         self,
         screen: pygame.Surface,
         pellet: Pellet,
-        camera
+        camera,
+        is_selected: bool = False
     ):
         """Render a single pellet."""
         # Get screen position
@@ -103,6 +106,14 @@ class PelletRenderer:
         outline_width = 1 + (pellet.generation // 3)  # Thicker outline for evolved pellets
         outline_width = min(outline_width, 3)  # Max 3 pixels
         pygame.draw.circle(screen, outline_color, screen_pos, radius, outline_width)
+        
+        # Selection highlight
+        if is_selected:
+            # Draw a bright white ring around the pellet
+            highlight_radius = radius + 4
+            pygame.draw.circle(screen, (255, 255, 255), screen_pos, highlight_radius, 2)
+            # Draw a second thinner ring further out
+            pygame.draw.circle(screen, (200, 255, 200), screen_pos, highlight_radius + 3, 1)
         
         # Show generation number for evolved pellets (gen > 0)
         if self.show_generation and pellet.generation > 0:

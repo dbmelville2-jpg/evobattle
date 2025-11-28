@@ -93,6 +93,65 @@ An evolutionary ecosystem where creatures form dynamic genetic families:
 
 See [Lineage System Documentation](docs/LINEAGE_SYSTEM_DOCUMENTATION.md) for details.
 
+### Building System ✓ NEW!
+A complete construction system where creatures gather materials and build structures:
+- **6 Building Types**: Shelter (HP regen), Nest (breeding bonus), Food Cache (storage), Watchtower (vision), Barrier (defense), Workshop (crafting)
+- **4 Material Types**: Wood, Stone, Plant Fiber, Organic - each with unique properties
+- **Trait-Based Building**: Only creatures with "Builder" trait can construct; personality affects priority
+- **Construction Mechanics**: Gather materials → Transport to site → Build tile-by-tile
+- **Cooperative Building**: Multiple creatures can contribute to the same structure
+- **Building Effects**: Passive bonuses (HP regeneration, breeding speed, etc.)
+- **Material Spawning**: Resources spawn naturally and can be gathered
+- **Building Decay**: Structures degrade over time and require maintenance
+
+The building system integrates with the attention system, allowing creatures to prioritize construction based on their needs and traits.
+
+### Event Logger System ✓ NEW!
+Comprehensive event tracking and analysis system:
+- **Real-Time Logging**: All significant events logged to console with timestamps
+- **Event Categories**: Births, deaths, combat, foraging, building, disease, breeding
+- **Session Summaries**: Automatic generation of session statistics
+- **File Output**: Events saved to log files for post-game analysis
+- **Detailed Tracking**: Captures event context (killer, cause of death, parents, etc.)
+- **Windows Compatible**: Unicode handling for cross-platform compatibility
+
+Perfect for analyzing creature behavior patterns, tracking evolutionary trends, and understanding simulation dynamics.
+
+### Social Skills System ✓ NEW!
+Advanced combat skills based on social dynamics and cooperation:
+- **Teamwork**: Damage bonus when fighting alongside allies (scales with ally count and skill level)
+- **Intimidation**: Damage bonus based on aggression personality trait
+- **Leadership**: Buff nearby allies with stat bonuses (attack/defense increase)
+- **Skill Progression**: Skills improve through use in combat
+- **Strategic Depth**: Encourages pack tactics and social cooperation
+- **Combat Integration**: Skills seamlessly integrate with existing damage calculations
+
+Social skills add a new layer of tactical depth, rewarding creatures that work together and punishing lone wolves.
+
+### Enhanced UI Systems ✓ NEW!
+Interactive inspection and visualization tools:
+- **Creature Inspector**: Click any creature to view comprehensive stats, traits, history, skills, personality, relationships, and current focus
+- **Pellet Inspector**: Detailed nutritional information, toxicity, generation, and evolutionary history for food sources
+- **Scrollable Panels**: Handle long content with smooth scrolling
+- **Auto-Hide**: Inspectors automatically hide when clicking elsewhere
+- **Visual Feedback**: Selected entities highlighted in the game view
+- **Population Panels**: Track genetic strains, disease strains, pellet evolution, and neural patterns
+- **Battle Feed**: Real-time event log showing all significant actions
+
+The UI provides deep insight into the simulation, making it easy to understand creature behavior and track evolutionary progress.
+
+### Battle Manager Architecture ✓
+Refactored modular architecture for better maintainability:
+- **10 Specialized Managers**: AI, Building, Combat, Environment, Events, Lifecycle, Movement, Neural, Resources, Cooperative Resources
+- **Separation of Concerns**: Each manager handles a specific domain
+- **Event-Driven**: Managers communicate via event bus for loose coupling
+- **Modular Features**: Easy to enable/disable systems independently
+- **Improved Performance**: Optimized update cycles and batching
+- **Easier Testing**: Isolated managers simplify unit testing
+
+This architecture makes the codebase more maintainable and extensible for future features.
+
+
 ## Quick Start
 
 ## For Developers

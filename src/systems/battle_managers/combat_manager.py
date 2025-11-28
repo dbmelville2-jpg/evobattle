@@ -42,12 +42,14 @@ class CombatManager:
         event_manager: EventManager,
         combat_config: Any,
         trait_effects_handler: Any,
-        enhancer: Optional[Any] = None
+        enhancer: Optional[Any] = None,
+        event_logger: Any = None
     ):
         self.event_manager = event_manager
         self.combat_config = combat_config
         self.trait_effects = trait_effects_handler
         self.enhancer = enhancer
+        self.event_logger = event_logger
         self.DEBUG = False
 
     def attempt_attack(self, attacker: Any, defender: Any, current_time: float, creatures_list: List[Any]):
@@ -243,6 +245,22 @@ class CombatManager:
                 message=f"{defender.creature.name} takes {actual_damage} damage!",
                 data={'remaining_hp': defender.creature.stats.hp, 'max_hp': defender.creature.stats.max_hp}
             ))
+            
+            # Log to event logger
+            if self.event_logger:
+                attacker_strain = attacker.creature.strain_id if hasattr(attacker.creature, 'strain_id') else "Unknown"
+                defender_strain = defender.creature.strain_id if hasattr(defender.creature, 'strain_id') else "Unknown"
+                timestamp = attacker.creature.age if hasattr(attacker.creature, 'age') else 0
+                
+                self.event_logger.log_attack(
+                    attacker_id=attacker.creature.creature_id,
+                    attacker_strain=attacker_strain,
+                    target_id=defender.creature.creature_id,
+                    target_strain=defender_strain,
+                    damage=actual_damage,
+                    timestamp=timestamp,
+                    ability=ability.name if ability.name != "Basic Attack" else None
+                )
             
             # Only count death if creature was alive before this attack
             if was_alive_before_damage and not defender.is_alive():

@@ -36,7 +36,8 @@ class ResourceManager:
         creature_grid: SpatialHashGrid,
         spawn_rate: float = 0.1,
         initial_resources: int = 5,
-        enable_growth_system: bool = True
+        enable_growth_system: bool = True,
+        event_logger: Any = None
     ):
         """
         Initialize the resource manager.
@@ -55,6 +56,7 @@ class ResourceManager:
         self.spawn_rate = spawn_rate
         self.time_since_last_spawn = 0.0
         self._pellet_update_counter = 0
+        self.event_logger = event_logger
         
         # Grass growth enhancement system
         if enable_growth_system:
@@ -209,6 +211,20 @@ class ResourceManager:
                             # Notify living world enhancer
                             if enhancer:
                                 enhancer.on_pellet_eaten(resource, creature.creature)
+                            
+                            # Log to event logger
+                            if self.event_logger:
+                                strain_name = creature.creature.strain_id if hasattr(creature.creature, 'strain_id') else "Unknown"
+                                timestamp = creature.creature.age if hasattr(creature.creature, 'age') else 0
+                                pellet_type = resource.traits.species if hasattr(resource.traits, 'species') else "plant"
+                                
+                                self.event_logger.log_pellet_collection(
+                                    creature_id=creature.creature.creature_id,
+                                    strain_name=strain_name,
+                                    pellet_type=pellet_type,
+                                    nutrition=hunger_restored,
+                                    timestamp=timestamp
+                                )
         
         # Remove collected pellets
         for pellet in pellets_to_remove:
@@ -227,7 +243,7 @@ class ResourceManager:
         self._pellet_update_counter += 1
         should_check_reproduction = (self._pellet_update_counter % 30 == 0)
         
-        # Get only Pellet objects (not legacy Vector2D resources)
+        # Get only Pellet objects
         for pellet in self.arena.pellets:
             # Age the pellet
             pellet.tick(delta_time)
