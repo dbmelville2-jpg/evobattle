@@ -95,7 +95,7 @@ See [Lineage System Documentation](docs/LINEAGE_SYSTEM_DOCUMENTATION.md) for det
 
 ### Building System ✓ NEW!
 A complete construction system where creatures gather materials and build structures:
-- **6 Building Types**: Shelter (HP regen), Nest (breeding bonus), Food Cache (storage), Watchtower (vision), Barrier (defense), Workshop (crafting)
+- **10 Building Types**: Shelter, Food Cache, Nest, Watchtower, Barrier, Shrine, Garden, Bridge, Trap, Territory Marker
 - **4 Material Types**: Wood, Stone, Plant Fiber, Organic - each with unique properties
 - **Trait-Based Building**: Only creatures with "Builder" trait can construct; personality affects priority
 - **Construction Mechanics**: Gather materials → Transport to site → Build tile-by-tile

@@ -401,4 +401,196 @@ The `src/systems` directory contains **35 Python files** organized into:
 - **Trait Injection**: Inject traits for research purposes
 - **Terrain Affinity**: Track terrain preferences
 
+---
+
+## battle_managers/
+
+The `battle_managers/` subdirectory contains the refactored battle system architecture, splitting `battle_spatial.py` into focused, single-responsibility managers.
+
+### ai_manager.py
+
+Manages AI decision-making for creatures.
+
+**Classes:**
+- `AIManager` - Coordinates creature AI decisions
+
+**Methods:**
+- `__init__(battle)` - Initialize AI manager
+- `update_creature_ai(creature, dt)` - Update AI for single creature
+- `update_all_ai(dt)` - Update AI for all creatures
+
+### building_manager.py
+
+Manages building construction, materials, and building effects.
+
+**Classes:**
+- `BuildingManager` - Handles all building-related logic
+
+**Methods:**
+- `__init__(battle)` - Initialize building manager
+- `update(dt)` - Update buildings and construction
+- `spawn_materials_from_pellet(pellet_position, pellet_traits)` - Spawn materials when pellet dies
+- `try_pickup_material(creature)` - Attempt to pick up nearby material
+- `try_deposit_material(creature)` - Attempt to deposit material into building
+- `find_nearest_building(position, building_type, max_distance)` - Find nearest building of type
+- `get_buildings_in_radius(position, radius)` - Get all buildings within radius
+- `apply_building_effects(creature)` - Apply building effects to creature
+
+### combat_manager.py
+
+Manages combat encounters, damage calculation, and battle resolution.
+
+**Classes:**
+- `CombatManager` - Handles all combat logic
+
+**Methods:**
+- `__init__(battle)` - Initialize combat manager
+- `process_combat_encounter(attacker, defender)` - Process combat between two creatures
+- `calculate_damage(attacker, defender, ability)` - Calculate damage for an attack
+- `apply_damage(creature, damage, source)` - Apply damage to creature
+- `apply_status_effect(creature, effect)` - Apply status effect to creature
+- `check_combat_skills(attacker, defender)` - Check and apply combat skills
+
+### cooperative_resources.py
+
+Manages cooperative resource spawning (pellets spawned when creatures cooperate).
+
+**Functions:**
+- `spawn_cooperative_pellet(battle, position, cooperation_level)` - Spawn pellet from cooperation
+
+### environment_manager.py
+
+Manages environmental effects, weather, terrain, and hazards.
+
+**Classes:**
+- `EnvironmentManager` - Handles environmental simulation
+
+**Methods:**
+- `__init__(battle)` - Initialize environment manager
+- `update(dt)` - Update environment state
+- `apply_weather_effects(creature)` - Apply weather effects to creature
+- `apply_terrain_effects(creature)` - Apply terrain effects to creature
+- `apply_hazard_damage(creature)` - Apply environmental hazard damage
+- `get_terrain_at(position)` - Get terrain type at position
+- `get_weather()` - Get current weather
+
+### event_manager.py
+
+Manages battle events for animation and logging.
+
+**Classes:**
+- `EventManager` - Handles event creation and distribution
+
+**Methods:**
+- `__init__()` - Initialize event manager
+- `add_event(event)` - Add event to queue
+- `get_events()` - Get all pending events
+- `clear_events()` - Clear event queue
+
+### lifecycle_manager.py
+
+Manages creature and pellet lifecycles (birth, death, aging, reproduction).
+
+**Classes:**
+- `LifecycleManager` - Handles all lifecycle events
+
+**Methods:**
+- `__init__(battle)` - Initialize lifecycle manager
+- `update(dt)` - Update lifecycles
+- `handle_creature_death(creature, cause)` - Handle creature death
+- `handle_pellet_death(pellet, cause)` - Handle pellet death
+- `attempt_breeding(creature1, creature2)` - Attempt to breed two creatures
+- `spawn_creature(position, traits, parent_ids)` - Spawn new creature
+- `spawn_pellet(position, traits, parent_id)` - Spawn new pellet
+- `age_creatures(dt)` - Age all creatures
+- `age_pellets(dt)` - Age all pellets
+
+### movement_manager.py
+
+Manages creature and pellet movement, pathfinding, and collision.
+
+**Classes:**
+- `MovementManager` - Handles all movement logic
+
+**Methods:**
+- `__init__(battle)` - Initialize movement manager
+- `update_creature_movement(creature, dt)` - Update creature movement
+- `update_pellet_movement(pellet, dt)` - Update pellet movement
+- `move_creature_to(creature, target_position, dt)` - Move creature toward target
+- `check_collision(entity1, entity2)` - Check if two entities collide
+- `get_path_to(start, end)` - Get pathfinding path
+
+### neural_manager.py
+
+Manages neural network updates and decision-making.
+
+**Classes:**
+- `NeuralManager` - Handles neural brain processing
+
+**Methods:**
+- `__init__(battle)` - Initialize neural manager
+- `update_neural_decisions(creature, dt)` - Update creature's neural network
+- `train_network(creature, reward)` - Train creature's network with reward
+- `get_network_state(creature)` - Get current network state
+
+### resource_manager.py
+
+Manages pellet spawning, growth, and resource distribution.
+
+**Classes:**
+- `ResourceManager` - Handles resource management
+
+**Methods:**
+- `__init__(battle)` - Initialize resource manager
+- `update(dt)` - Update resource state
+- `spawn_pellet(position, traits)` - Spawn new pellet
+- `remove_pellet(pellet)` - Remove pellet from battle
+- `get_pellets_in_radius(position, radius)` - Get pellets within radius
+- `calculate_pellet_density(position)` - Calculate pellet density at location
+
+---
+
+## Summary
+
+The `src/systems` directory contains **32 Python files** organized into core systems and specialized managers:
+
+### Core Systems
+- **Battle System**: Spatial combat with refactored manager architecture
+- **Population**: Creature and pellet population management
+- **Breeding**: Reproduction and genetic inheritance
+
+### Environment \u0026 Resources
+- **Biome Generator**: Procedural biome generation
+- **Grass Growth**: Resource growth and distribution
+- **Disease System**: Disease outbreaks and transmission
+- **Environment Manager**: Weather, terrain, and hazards
+
+### Learning \u0026 Intelligence
+- **Neural Networks**: Brain-based decision-making
+- **Observational Learning**: Learning from watching others
+- **Learned Behavior Inheritance**: Passing learned behaviors to offspring
+- **Reward Tracking**: Reinforcement learning
+
+### Research \u0026 Ethics
+- **Event Logger**: Comprehensive game event logging
+- **Research Assistants**: AI analysis tools
+- **Research Ethics**: Ethical considerations and consent
+- **Scientific Intervention**: Controlled experiments
+
+### Trait Systems
+- **Trait Effects Handler**: Apply trait effects in combat and behavior
+- **Trait Injection**: Inject traits for research purposes
+- **Terrain Affinity**: Track terrain preferences
+
+### Battle Managers (Refactored Architecture)
+- **AI Manager**: Creature AI and decision-making
+- **Building Manager**: Construction and building effects
+- **Combat Manager**: Damage calculation and battle resolution
+- **Environment Manager**: Weather, terrain, and hazards
+- **Event Manager**: Battle event handling
+- **Lifecycle Manager**: Birth, death, aging, reproduction
+- **Movement Manager**: Pathfinding and collision
+- **Neural Manager**: Neural network processing
+- **Resource Manager**: Pellet spawning and distribution
+
 Each system is designed to work together to create a complex, emergent ecosystem where creatures evolve, learn, compete, and cooperate in a dynamic 2D world.

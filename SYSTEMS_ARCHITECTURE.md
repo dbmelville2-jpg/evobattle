@@ -14,8 +14,13 @@
 4. [Environmental Systems](#environmental-systems)
 5. [Learning & Evolution](#learning--evolution)
 6. [Combat & Behavior](#combat--behavior)
-7. [UI & Visualization](#ui--visualization)
-8. [System Interaction Map](#system-interaction-map)
+7. [Building System](#building-system)
+8. [Battle Managers Refactor](#battle-managers-refactor)
+9. [Event Logger System](#event-logger-system)
+10. [Social Skills System](#social-skills-system)
+11. [Enhanced UI Systems](#enhanced-ui-systems)
+12. [UI & Visualization](#ui--visualization)
+13. [System Interaction Map](#system-interaction-map)
 
 ---
 
@@ -1626,6 +1631,498 @@ if mouse_click and not inspector.contains(mouse_pos):
 - Reduce creature count
 - Increase stagger batch size
 - Disable expensive features (disease, building)
+
+---
+
+## Building System
+
+**Files:** `src/models/building/`, `src/systems/battle_managers/building_manager.py`
+
+The building system allows creatures to gather materials and construct structures that provide passive bonuses.
+
+### Building Types
+
+**10 Building Types:**
+1. **Shelter** - Provides HP regeneration
+2. **Food Cache** - Stores food resources
+3. **Nest** - Breeding speed bonus
+4. **Watchtower** - Extended vision range
+5. **Barrier** - Defensive structure
+6. **Shrine** - Morale/social bonus
+7. **Garden** - Food production
+8. **Bridge** - Terrain crossing
+9. **Trap** - Defensive damage
+10. **Territory Marker** - Claim area
+
+### Materials
+
+**4 Material Types:**
+- **Wood** - Moderate durability, common
+- **Stone** - High durability, less common
+- **Plant Fiber** - Low durability, very common
+- **Organic** - Lowest durability, common
+
+**Material Properties:**
+- Weight (affects creature speed when carrying)
+- Durability (affects building lifespan)
+- Rarity (spawn frequency)
+- Color (visual rendering)
+
+### Construction Process
+
+```
+1. Creature identifies building need
+   ↓
+2. Selects appropriate building type
+   ↓
+3. Finds suitable build location
+   ↓
+4. Gathers required materials
+   ↓
+5. Transports materials to site
+   ↓
+6. Deposits materials (tile-by-tile construction)
+   ↓
+7. Building activates when complete
+```
+
+### Building Behavior AI
+
+**BuildingBehaviorSystem** manages creature building decisions:
+
+**Need Identification:**
+- Shelter need (low HP, weather exposure)
+- Food storage need (high hunger, food scarcity)
+- Breeding need (mating season, population)
+- Defense need (under attack, territory)
+
+**Trait-Based Building:**
+- Only creatures with "Builder" trait can construct
+- Personality affects building priority
+- Lazy creatures rarely build
+- Aggressive creatures prefer defensive structures
+
+**Cooperative Building:**
+- Multiple creatures can work on same structure
+- Strain-based cooperation (same genetic family)
+- Shared construction progress
+
+### Building Effects
+
+Buildings provide passive bonuses to nearby creatures:
+- **Shelter**: +2 HP/second regeneration
+- **Nest**: +50% breeding success rate
+- **Watchtower**: +30% vision range
+- **Food Cache**: Stores up to 100 nutrition
+
+### Building Decay
+
+Buildings degrade over time:
+- Base decay rate: 2% per minute
+- Weather multipliers (rain 1.5x, storm 2.5x)
+- Material durability affects lifespan
+- Requires periodic maintenance
+
+---
+
+## Battle Managers Refactor
+
+**Files:** `src/systems/battle_managers/`
+
+The battle system has been refactored from a monolithic `battle_spatial.py` into 10 specialized managers for better maintainability and modularity.
+
+### Manager Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  SpatialBattle (Coordinator)                            │
+│  - Orchestrates all managers                            │
+│  - Maintains shared state                               │
+└────────────────┬────────────────────────────────────────┘
+                 │
+    ┌────────────┼────────────┐
+    │            │            │
+    ▼            ▼            ▼
+┌─────────┐  ┌─────────┐  ┌─────────┐
+│   AI    │  │ Combat  │  │Movement │  ... (7 more)
+│ Manager │  │ Manager │  │ Manager │
+└─────────┘  └─────────┘  └─────────┘
+```
+
+### Individual Managers
+
+#### 1. AI Manager
+**Responsibility:** Creature decision-making
+- Updates creature AI (staggered batches)
+- Processes attention system
+- Handles behavior selection
+
+#### 2. Building Manager
+**Responsibility:** Construction and materials
+- Spawns materials from pellets
+- Handles material pickup/deposit
+- Applies building effects
+- Manages building decay
+
+#### 3. Combat Manager
+**Responsibility:** Battle resolution
+- Processes combat encounters
+- Calculates damage with all modifiers
+- Applies status effects
+- Checks combat skills (Teamwork, Intimidation, Leadership)
+
+#### 4. Environment Manager
+**Responsibility:** Environmental simulation
+- Updates weather and time of day
+- Applies terrain effects
+- Manages environmental hazards
+- Handles weather-based modifiers
+
+#### 5. Event Manager
+**Responsibility:** Event distribution
+- Queues battle events
+- Distributes to subscribers
+- Manages event lifecycle
+
+#### 6. Lifecycle Manager
+**Responsibility:** Birth, death, aging
+- Handles creature/pellet death
+- Manages breeding attempts
+- Spawns new entities
+- Ages creatures and pellets
+
+#### 7. Movement Manager
+**Responsibility:** Physics and pathfinding
+- Updates creature movement
+- Handles collision detection
+- Manages separation forces
+- Pathfinding (future)
+
+#### 8. Neural Manager
+**Responsibility:** Neural network processing
+- Updates neural brains
+- Trains networks with rewards
+- Manages network state
+
+#### 9. Resource Manager
+**Responsibility:** Pellet management
+- Spawns pellets
+- Handles pellet growth
+- Manages resource distribution
+- Calculates pellet density
+
+#### 10. Cooperative Resources
+**Responsibility:** Cooperation-based spawning
+- Spawns pellets from cooperation
+- Rewards social behavior
+
+### Benefits of Refactor
+
+**Maintainability:**
+- Each manager has single responsibility
+- Easier to locate and fix bugs
+- Clear separation of concerns
+
+**Modularity:**
+- Can enable/disable managers independently
+- Easy to add new managers
+- Reduced coupling between systems
+
+**Testing:**
+- Managers can be unit tested in isolation
+- Mock dependencies easily
+- Faster test execution
+
+**Performance:**
+- Optimized update cycles per manager
+- Better batching opportunities
+- Reduced redundant calculations
+
+---
+
+## Event Logger System
+
+**File:** `src/systems/event_logger.py`
+
+Comprehensive event tracking and analysis system for understanding simulation dynamics.
+
+### Event Categories
+
+**Tracked Events:**
+1. **Creature Events**
+   - Birth (parents, traits, strain)
+   - Death (cause, killer, age, achievements)
+   - Leveling up
+   - Trait mutations
+
+2. **Combat Events**
+   - Attacks (attacker, defender, damage)
+   - Kills (killer, victim, method)
+   - Status effects applied
+   - Critical hits
+
+3. **Foraging Events**
+   - Pellet consumption
+   - Hunger satisfaction
+   - Starvation warnings
+
+4. **Building Events**
+   - Material gathering
+   - Construction progress
+   - Building completion
+   - Building decay
+
+5. **Disease Events**
+   - Infection
+   - Transmission
+   - Recovery/death
+
+6. **Breeding Events**
+   - Mating attempts
+   - Successful breeding
+   - Offspring traits
+
+### Logging Output
+
+**Console Output:**
+```
+[12:34:56] BIRTH: Creature 'Swift Hunter' born (Parents: Alpha, Beta)
+[12:35:02] COMBAT: 'Swift Hunter' attacked 'Slow Prey' for 15 damage
+[12:35:08] DEATH: 'Slow Prey' killed by 'Swift Hunter' (Combat)
+[12:35:15] FORAGING: 'Swift Hunter' consumed pellet (Nutrition: +25)
+```
+
+**File Output:**
+- Events saved to `logs/session_YYYY-MM-DD_HH-MM-SS.log`
+- JSON format for programmatic analysis
+- Session summaries generated on exit
+
+### Session Summaries
+
+Automatic statistics generation:
+- Total births/deaths
+- Most successful creatures
+- Dominant genetic strains
+- Combat statistics
+- Resource consumption
+- Building activity
+
+### Windows Compatibility
+
+- Unicode handling for special characters
+- UTF-8 encoding for file output
+- Cross-platform path handling
+
+---
+
+## Social Skills System
+
+**Files:** `src/models/skills.py`, `src/systems/battle_managers/combat_manager.py`
+
+Advanced combat skills based on social dynamics and cooperation.
+
+### Skill Types
+
+#### 1. Teamwork
+**Effect:** Damage bonus when fighting alongside allies
+
+**Mechanics:**
+- Base bonus: +5% damage per nearby ally
+- Skill level multiplier: 1.0 + (level * 0.1)
+- Max bonus: +50% damage (5 allies, level 10)
+- Range: 50 units
+
+**Progression:**
+- Gains XP when dealing damage with allies nearby
+- Levels up every 100 XP
+
+#### 2. Intimidation
+**Effect:** Damage bonus based on aggression personality
+
+**Mechanics:**
+- Bonus: aggression_trait * skill_level * 0.15
+- High aggression (0.8) + level 10 = +120% damage
+- Works solo or in groups
+- Psychological warfare
+
+**Progression:**
+- Gains XP on successful attacks
+- Levels up every 150 XP
+
+#### 3. Leadership
+**Effect:** Buff nearby allies with stat bonuses
+
+**Mechanics:**
+- Attack bonus: +10% per skill level
+- Defense bonus: +5% per skill level
+- Affects all allies within 75 units
+- Stacks with other buffs
+
+**Progression:**
+- Gains XP when allies deal/take damage nearby
+- Levels up every 200 XP
+
+### Combat Integration
+
+Skills are checked and applied during damage calculation:
+
+```python
+def calculate_damage(attacker, defender, ability):
+    base_damage = ability.power * attacker.attack
+    
+    # Check Teamwork skill
+    if has_nearby_allies(attacker):
+        base_damage *= teamwork_bonus(attacker)
+    
+    # Check Intimidation skill
+    base_damage *= intimidation_bonus(attacker)
+    
+    # Apply Leadership buffs to attacker
+    base_damage *= leadership_attack_buff(attacker)
+    
+    # Apply defender's Leadership defense buff
+    damage = base_damage / leadership_defense_buff(defender)
+    
+    return damage
+```
+
+### Strategic Depth
+
+**Pack Tactics:**
+- Teamwork encourages group fighting
+- Leadership creates natural pack leaders
+- Synergy with Social trait
+
+**Lone Wolves:**
+- Intimidation rewards solo aggression
+- High-aggression creatures become fearsome
+- Trade-off: no teamwork bonus
+
+**Emergent Behavior:**
+- Creatures learn to stay near allies
+- Alpha creatures emerge (high Leadership)
+- Pack hierarchies form naturally
+
+---
+
+## Enhanced UI Systems
+
+**Files:** `src/rendering/creature_inspector.py`, `src/rendering/pellet_inspector.py`, `src/rendering/ui_components.py`
+
+Interactive inspection and visualization tools for deep simulation insight.
+
+### Creature Inspector
+
+**Activation:** Click any creature in the arena
+
+**Displayed Information:**
+1. **Identity**
+   - Name, ID, Strain
+   - Age, Generation
+   - Color-coded strain indicator
+
+2. **Stats**
+   - HP, Max HP
+   - Attack, Defense, Speed
+   - Hunger, Energy
+
+3. **Traits**
+   - All active traits
+   - Trait effects
+   - Genetic/mutated markers
+
+4. **Skills**
+   - Skill levels and XP
+   - Skill effects
+   - Progression bars
+
+5. **Personality**
+   - 7 personality traits (0.0-1.0)
+   - Behavioral tendencies
+   - Social compatibility
+
+6. **Relationships**
+   - Family bonds
+   - Rivalries
+   - Alliances
+
+7. **History**
+   - Kills, deaths caused
+   - Achievements
+   - Life events
+
+8. **Current Focus**
+   - Current attention target
+   - Behavior state
+   - Goals
+
+**Features:**
+- Scrollable content
+- Auto-hide on click elsewhere
+- Visual selection highlight
+- Real-time updates
+
+### Pellet Inspector
+
+**Activation:** Click any pellet in the arena
+
+**Displayed Information:**
+1. **Nutritional Data**
+   - Nutrition value
+   - Toxicity level
+   - Palatability score
+
+2. **Evolution**
+   - Generation number
+   - Parent pellet
+   - Mutation history
+
+3. **Traits**
+   - Active pellet traits
+   - Growth modifiers
+   - Defense mechanisms
+
+4. **Lifecycle**
+   - Age
+   - Reproduction count
+   - Times targeted
+
+**Features:**
+- Compact display
+- Hover tooltips
+- Color-coded quality
+
+### Population Panels
+
+**Genetic Strains Panel:**
+- Active strain count
+- Dominant strains
+- Extinction events
+- Color-coded families
+
+**Disease Strains Panel:**
+- Active diseases
+- Infection rates
+- Transmission chains
+
+**Pellet Evolution Panel:**
+- Generation distribution
+- Trait diversity
+- Population health
+
+**Neural Patterns Panel:**
+- Collective learning
+- Behavior patterns
+- Network statistics
+
+### Battle Feed
+
+Real-time event log:
+- Combat actions
+- Deaths and births
+- Significant events
+- Scrollable history
+- Color-coded by type
 
 ---
 

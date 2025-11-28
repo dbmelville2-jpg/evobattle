@@ -9,6 +9,7 @@ This document provides a comprehensive overview of all functions, classes, and m
 - [ability.py](#abilitypy) - Creature abilities and special moves
 - [attention.py](#attentionpy) - Attention and focus management
 - [behavior.py](#behaviorpy) - Spatial combat behaviors
+- [building/](#building) - Building system (behavior, config, materials)
 - [combat_config.py](#combat_configpy) - Combat configuration parameters
 - [combat_memory.py](#combat_memorypy) - Combat encounter tracking
 - [combat_targeting.py](#combat_targetingpy) - Enhanced targeting system
@@ -21,17 +22,25 @@ This document provides a comprehensive overview of all functions, classes, and m
 - [environment.py](#environmentpy) - Environmental simulation
 - [environmental_traits.py](#environmental_traitspy) - Environmental adaptation traits
 - [evolution.py](#evolutionpy) - Evolution and transformation system
+- [expanded_traits.py](#expanded_traitspy) - Advanced combat and behavioral traits
 - [genetics.py](#geneticspy) - Advanced genetics engine
 - [history.py](#historypy) - Life event tracking
 - [injury_tracker.py](#injury_trackerpy) - Injury and damage tracking
 - [interactions.py](#interactionspy) - Social interaction tracking
 - [pellet.py](#pelletpy) - Food/resource pellets
+- [pellet_history.py](#pellet_historypy) - Pellet lifecycle tracking
 - [personality.py](#personalitypy) - Personality system
+- [pheromone.py](#pheromonepy) - Chemical signals
 - [relationships.py](#relationshipspy) - Social bonds and relationships
+- [relationship_metrics.py](#relationship_metricspy) - Relationship analytics and cooperation
 - [skills.py](#skillspy) - Skill development system
 - [spatial.py](#spatialpy) - 2D spatial components
 - [stats.py](#statspy) - Statistics and modifiers
+- [status_effect.py](#status_effectpy) - Battle status effects
 - [trait.py](#traitpy) - Trait model
+- [trait_analytics.py](#trait_analyticspy) - Trait tracking and analytics
+- [trait_generator.py](#trait_generatorpy) - Procedural trait generation
+- [weather_terrain_traits.py](#weather_terrain_traitspy) - Weather and terrain traits
 
 ---
 
@@ -1004,36 +1013,419 @@ Represents a genetic trait that can be inherited by fighters.
 
 ---
 
-## Additional Files
+## building/
 
-### building/ subdirectory
-Contains building-related models:
-- `building_behavior.py` - Building behavior logic
-- `building_config.py` - Building configuration
-- `building_material.py` - Building material definitions
+### building_behavior.py
 
-### Other Model Files
-- `expanded_traits.py` - Extended trait definitions
-- `pellet_history.py` - Pellet life history tracking
-- `pheromone.py` - Pheromone system
-- `relationship_metrics.py` - Relationship metrics and shared history
-- `status_effect.py` - Status effect system
-- `trait_analytics.py` - Trait analytics and tracking
-- `trait_generator.py` - Trait generation utilities
-- `weather_terrain_traits.py` - Weather and terrain-specific traits
+#### Classes
+
+##### `BuildingNeed` (Enum)
+Types of building needs creatures can identify.
+- `SHELTER`, `FOOD_STORAGE`, `BREEDING`, `DEFENSE`, `VISION`, `TERRITORY`, `SOCIAL`, `SUSTENANCE`
+
+##### `BuildingTask`
+Represents an active building task for a creature.
+
+**Methods:**
+- `is_materials_complete()` - Check if all materials gathered
+- `get_next_material_needed()` - Get next material type needed
+
+##### `BuildingDecision`
+Result of a building behavior update with action type, target position, and metadata.
+
+##### `BuildingBehaviorSystem`
+Manages building behavior AI for creatures.
+
+**Methods:**
+- `__init__()` - Initialize building behavior system
+- `identify_building_need(creature, environment, nearby_buildings)` - Determine if creature has building need
+- `select_building_type(need, creature_traits)` - Choose appropriate building type for need
+- `find_build_location(creature_position, building_type, arena_bounds, existing_buildings)` - Find suitable location to build
+- `find_nearest_material(creature_position, material_type, available_materials, creature_traits)` - Find nearest material of specified type
+- `calculate_building_urgency(creature_traits, has_active_task, materials_nearby, strain_building_exists)` - Calculate building urgency multiplier
+- `find_strain_building(creature_strain_id, creature_position, existing_buildings)` - Find nearest incomplete building started by same genetic strain
+- `can_carry_material(creature_traits, current_carry_count)` - Check if creature can carry more materials
+- `get_building_durability_multiplier(creature_traits)` - Get durability multiplier based on traits
+
+### building_config.py
+
+#### Classes
+
+##### `BuildingType` (Enum)
+Types of buildings creatures can build.
+- `SHELTER`, `FOOD_CACHE`, `NEST`, `WATCHTOWER`, `BARRIER`, `SHRINE`, `GARDEN`, `BRIDGE`, `TRAP`, `TERRITORY_MARKER`
+
+##### `BuildingBlueprint`
+Blueprint defining how to build a building.
+
+**Methods:**
+- `get_total_material_count()` - Get total number of materials needed
+- `get_footprint_size()` - Get width and height of building's footprint
+
+##### `Building`
+An actual building instance built in the arena.
+
+**Methods:**
+- `is_complete()` - Check if building is fully built
+- `is_damaged()` - Check if building needs repair
+- `is_destroyed()` - Check if building is destroyed
+- `activate()` - Activate building effects
+- `deactivate()` - Deactivate building effects
+- `damage(amount)` - Apply damage to building
+- `repair(amount)` - Repair building
+
+#### Functions
+
+- `get_blueprint(building_type)` - Get blueprint for a building type
+- `get_all_building_types()` - Get list of all buildable building types
+
+##### `BuildingConfig`
+Configuration for the building system with decay rates, material properties, and feature flags.
+
+### building_material.py
+
+#### Classes
+
+##### `MaterialType` (Enum)
+Types of building materials.
+- `PLANT_FIBER`, `WOOD`, `STONE`, `ORGANIC`
+
+##### `BuildingMaterial`
+Represents a building material that can be gathered and used.
+
+**Methods:**
+- `is_carried()` - Check if material is being carried
+- `is_on_ground()` - Check if material is on ground
+- `is_expired(current_time)` - Check if material has expired
+- `get_age(current_time)` - Get current age of material
+
+#### Functions
+
+- `get_material_weight(material_type)` - Get weight of material type
+- `get_material_durability(material_type)` - Get durability multiplier
+- `get_material_rarity(material_type)` - Get rarity (1.0 = common, 0.1 = rare)
+- `get_material_color(material_type)` - Get RGB color for rendering
+- `create_random_material(material_type, position, spawn_time)` - Create new material instance
+
+---
+
+## expanded_traits.py
+
+Comprehensive trait library with behavioral, physical, offensive, defensive, and ecological traits.
+
+### Predefined Traits
+
+**Behavioral Traits:**
+- `TIMID_TRAIT` - Flees easily, vulnerable while fleeing
+- `AGGRESSIVE_TRAIT` - Seeks combat, fights fiercely
+- `CURIOUS_TRAIT` - Explores more, better resource detection
+- `CAUTIOUS_TRAIT` - Careful and strategic, avoids risks
+- `RECKLESS_TRAIT` - No retreat, critical hit chance
+- `SOCIAL_TRAIT` - Cooperates better with family and allies
+- `SOLITARY_TRAIT` - Works alone, reduced cooperation
+
+**Physical Traits:**
+- `ARMORED_TRAIT` - Thick hide, exceptional defense
+- `NIMBLE_TRAIT` - High dodge chance, first strike
+- `REGENERATIVE_TRAIT` - Slowly heals over time
+- `VENOMOUS_TRAIT` - Poison on hit
+- `CAMOUFLAGED_TRAIT` - Blends with environment
+- `KEEN_SENSES_TRAIT` - Enhanced threat and food detection
+- `POWERFUL_TRAIT` - Immense physical strength
+
+**Combat Traits:**
+- `BERSERKER_TRAIT` - Damage increases as HP decreases
+- `EXECUTIONER_TRAIT` - Bonus damage to low-HP targets
+- `BLOODLUST_TRAIT` - Stacking damage bonus per kill
+- `BRUTAL_TRAIT` - Ignores armor, causes bleeding
+- `ASSASSIN_TRAIT` - Massive first-hit bonus, stealth
+- `APEX_PREDATOR_TRAIT` - Grows stronger with unique kills
+- `KAMIKAZE_TRAIT` - Massive damage but self-harm
+- `TOXIC_TRAIT` - All attacks inflict stacking poison
+- `FRENZY_TRAIT` - Speed increases when injured
+
+**Defensive Traits:**
+- `GUARDIAN_TRAIT` - Protects allies, damage reduction
+- `FORTRESS_TRAIT` - Extreme defense when stationary
+- `EVASIVE_TRAIT` - High dodge, mobility focus
+- `REFLECTIVE_TRAIT` - Returns damage to attacker
+- `LAST_STAND_TRAIT` - Massive boost when near death
+
+**Ecological Traits:**
+- `SCAVENGER_TRAIT` - Gains resources from corpses
+- `PARASITE_TRAIT` - Drains HP from nearby creatures
+- `SYMBIOTIC_TRAIT` - Heals allies, shares resources
+- `PACK_HUNTER_TRAIT` - Bonus with allies
+- `TERRITORIAL_TRAIT` - Defends home area
+
+**Pellet Traits:**
+- `TOXIC_DEFENSE_TRAIT` - Pellet poisons consumers
+- `NUTRITIOUS_TRAIT` - Extra nutrition value
+- `FAST_GROWING_TRAIT` - Rapid reproduction
+- `CAMOUFLAGED_PELLET_TRAIT` - Harder to detect
+- `SPORE_SPREADER_TRAIT` - Creates offspring when eaten
+
+---
+
+## pellet_history.py
+
+### Classes
+
+#### `PelletEventType` (Enum)
+Types of pellet lifecycle events.
+- `SPAWN`, `REPRODUCE`, `MUTATE`, `TARGETED`, `AVOIDED`, `EATEN`, `DIED`
+
+#### `PelletLifeEvent`
+Records a single pellet lifecycle event.
+
+**Methods:**
+- `to_dict()` - Serialize to dictionary
+- `from_dict(data)` - Deserialize from dictionary
+
+#### `CreatureTargetingStats`
+Statistics for a creature's interactions with a pellet.
+
+**Methods:**
+- `to_dict()` - Serialize to dictionary
+- `from_dict(data)` - Deserialize from dictionary
+
+#### `PelletLifeHistory`
+Comprehensive lifecycle tracking for a pellet.
+
+**Methods:**
+- `__init__(pellet_id, spawn_time)` - Initialize pellet life history
+- `record_spawn(location, parent_id)` - Record pellet spawn event
+- `record_reproduction(offspring_id, location)` - Record reproduction event
+- `record_mutation(mutation_details)` - Record mutation event
+- `record_targeted(creature_id, location, distance)` - Record being targeted by creature
+- `record_avoided(creature_id, location, reason)` - Record being avoided by creature
+- `record_eaten(creature_id, creature_name, location, nutritional_value)` - Record being eaten
+- `record_death(cause, location)` - Record natural death
+- `get_lifetime()` - Get pellet's lifetime in seconds
+- `get_targeting_stats(creature_id)` - Get targeting stats for specific creature
+- `get_palatability_score()` - Calculate palatability based on targeting vs avoidance
+- `get_most_interested_creature()` - Get creature that targeted most
+- `get_offspring_count()` - Get number of offspring produced
+- `get_recent_events(count)` - Get most recent events
+- `get_events_by_type(event_type)` - Get all events of specific type
+- `to_dict()` - Serialize to dictionary
+- `from_dict(data)` - Deserialize from dictionary
+
+---
+
+## pheromone.py
+
+### Classes
+
+#### `PheromoneType` (Enum)
+Types of pheromones.
+- `ATTRACT`, `REPEL`, `CONFUSION`
+
+#### `Pheromone`
+Represents a chemical signal in the environment.
+
+**Methods:**
+- `update(dt)` - Update pheromone state (decay)
+- `is_active()` - Check if pheromone is still potent
+
+---
+
+## relationship_metrics.py
+
+### Classes
+
+#### `SocialTrait` (Enum)
+Social personality traits.
+- `ALTRUISTIC`, `SELFISH`, `DOMINANT`, `SUBMISSIVE`, `COOPERATIVE`, `INDEPENDENT`, `PROTECTIVE`, `AGGRESSIVE`
+
+#### `RelationshipMetrics`
+Quantitative metrics for a relationship between two agents.
+
+**Methods:**
+- `__post_init__()` - Validate metrics are in valid ranges
+- `get_cooperation_score()` - Calculate overall cooperation likelihood
+- `decay(amount)` - Decay non-kinship metrics over time
+- `to_dict()` - Serialize to dictionary
+- `from_dict(data)` - Deserialize from dictionary
+
+#### `AgentTraits`
+Social personality traits for an agent/creature.
+
+**Methods:**
+- `__post_init__()` - Validate traits
+- `random()` - Generate random traits
+- `inherit(parent1, parent2, mutation_rate)` - Inherit traits from parents
+- `get_description()` - Get human-readable description
+- `to_dict()` - Serialize to dictionary
+- `from_dict(data)` - Deserialize from dictionary
+
+#### `SharedHistory`
+Records history of interactions between two agents.
+
+**Methods:**
+- `record_interaction(interaction_type)` - Record an interaction
+- `get_recent_interactions(since)` - Get interactions since given time
+- `to_dict()` - Serialize to dictionary
+- `from_dict(data)` - Deserialize from dictionary
+
+#### `AgentSocialState`
+Current social state and context for an agent.
+
+**Methods:**
+- `__post_init__()` - Validate state values
+
+#### `CooperativeBehaviorSystem`
+Manages cooperative behaviors between agents.
+
+**Methods:**
+- `should_share_food(giver, receiver, giver_state, receiver_state, relationship)` - Determine if should share food
+- `should_fight_together(agent, ally, agent_state, ally_state, relationship)` - Determine if should fight together
+- `should_follow_alpha(follower, alpha, follower_state, relationship)` - Determine if should follow alpha
+- `calculate_pack_cohesion(pack_members, relationships)` - Calculate pack cohesion score
+- `should_defend_ally(defender, ally, defender_state, ally_state, relationship)` - Determine if should defend ally
+- `calculate_cooperation_bonus(agent_traits, relationship, context)` - Calculate cooperation effectiveness bonus
+
+---
+
+## status_effect.py
+
+### Classes
+
+#### `StatusEffectType` (Enum)
+Types of status effects.
+- `POISON`, `BURN`, `PARALYSIS`, `SLEEP`, `FREEZE`, `CONFUSION`, `STUN`, `REGEN`, `SHIELD`
+
+#### `StatusEffect`
+Represents a status effect applied to a creature during battle.
+
+**Methods:**
+- `__init__(name, effect_type, duration, potency, prevents_action, applied_turn)` - Initialize status effect
+- `tick()` - Process one turn of effect
+- `is_active()` - Check if effect is still active
+- `get_damage()` - Get damage dealt this turn
+- `get_healing()` - Get healing provided this turn
+- `prevents_creature_action()` - Check if effect prevents creature from acting
+- `to_dict()` - Serialize to dictionary
+- `from_dict(data)` - Deserialize from dictionary
+
+### Functions
+
+- `create_status_effect(effect_name)` - Create status effect from predefined template
+
+---
+
+## trait_analytics.py
+
+### Classes
+
+#### `TraitDiscovery`
+Records when and how a trait first appeared.
+
+**Methods:**
+- `to_dict()` - Convert to dictionary
+
+#### `TraitSpreadMetrics`
+Tracks how a trait spreads through the population.
+
+**Methods:**
+- `to_dict()` - Convert to dictionary
+
+#### `InjectionEvent`
+Records a trait injection event.
+
+**Methods:**
+- `to_dict()` - Convert to dictionary
+
+#### `TraitAnalytics`
+Comprehensive analytics system for trait tracking and visualization.
+
+**Methods:**
+- `__init__()` - Initialize analytics system
+- `record_trait_discovery(trait_name, generation, source_type, discoverer_id, rarity, category)` - Record discovery of new trait
+- `record_injection_event(trait_name, generation, injection_reason, affected_creatures, event_data)` - Record trait injection event
+- `update_trait_spread(trait_name, generation, carrier_count, total_ever)` - Update spread metrics for trait
+- `record_creature_trait(creature_id, trait_name)` - Record that creature has specific trait
+- `calculate_trait_survival_rate(trait_name, total_deaths, deaths_with_trait)` - Calculate survival rate for creatures with trait
+- `get_trait_timeline(trait_name)` - Get timeline of trait events
+- `get_generation_summary(generation)` - Get summary of traits in specific generation
+- `get_most_successful_traits(limit)` - Get traits with highest survival rates
+- `get_rarest_traits(limit)` - Get rarest discovered traits
+- `export_to_json(filepath)` - Export analytics data to JSON
+- `export_to_csv(filepath)` - Export analytics data to CSV
+- `get_dashboard_data()` - Get data formatted for dashboard display
+
+---
+
+## trait_generator.py
+
+### Classes
+
+#### `TraitGenerator`
+Procedurally generates random traits for injection into gene pool.
+
+**Methods:**
+- `__init__(seed)` - Initialize trait generator
+- `generate_trait(category, rarity, generation, source_type)` - Generate random trait
+- `generate_creature_trait(generation, source_type)` - Generate trait specifically for creatures
+- `generate_pellet_trait(generation, source_type)` - Generate trait specifically for pellets
+- `_generate_unique_name(category)` - Generate unique trait name
+- `_generate_description(name, category)` - Generate description for trait
+- `_generate_modifiers(category, rarity)` - Generate stat modifiers
+- `_generate_interaction_effects(category, rarity)` - Generate interaction effects
+- `_determine_dominance(rarity)` - Determine dominance based on rarity
+- `_random_rarity()` - Generate random rarity with weighted probabilities
+- `get_generated_traits()` - Get list of all generated traits
+- `clear_history()` - Clear generation history
+
+---
+
+## weather_terrain_traits.py
+
+Centralized definitions for weather-responsive and terrain-adaptive traits.
+
+### Trait Dictionaries
+
+**WEATHER_TRAITS:**
+- `Storm Dancer` - Thrives in stormy weather
+- `Rain Harvester` - Gains nutrition bonus in rain
+- `Drought Survivor` - Requires less food in drought
+- `Fog Walker` - Stealth and evasion bonus in fog
+- `Lightning Rod` - Absorbs electrical energy from storms
+
+**TERRAIN_TRAITS:**
+- `Forest Dweller` - Stealth and cover bonuses in woods
+- `Desert Runner` - Speed boost in desert
+- `Marsh Wader` - Immune to toxins, moves freely in marshes
+- `Mountain Climber` - Movement and defense bonus on rocky terrain
+- `Amphibious` - Equally at home in water and land
+
+**SYNERGY_TRAITS:**
+- `Toxin Farmer` - Cultivates toxic pellets in marsh
+- `Mirage Maker` - Creates decoys in desert + drought
+- `Gardener` - Symbiotic relationship with pellets
+- `Bioluminescent` - Glows at night, better vision
+
+### Functions
+
+- `create_weather_trait(trait_name)` - Create weather-responsive trait instance
+- `create_terrain_trait(trait_name)` - Create terrain-adaptive trait instance
+- `create_synergy_trait(trait_name)` - Create environmental synergy trait instance
+- `get_all_environmental_traits()` - Get all weather, terrain, and synergy traits
 
 ---
 
 ## Summary
 
-The `src/models` directory contains **35+ Python files** with comprehensive systems for:
+The `src/models` directory contains **38 Python files** with comprehensive, fully-documented systems for:
 
-- **Combat**: Abilities, targeting, memory, configuration
-- **Creatures**: Stats, traits, genetics, evolution, skills, personality
-- **Environment**: Weather, terrain, hazards, day/night cycles
-- **Social Systems**: Relationships, interactions, beliefs, history
-- **Resources**: Pellets with traits and evolution
+- **Combat**: Abilities, targeting, memory, configuration, status effects
+- **Creatures**: Stats, traits, genetics, evolution, skills, personality, beliefs, brain
+- **Environment**: Weather, terrain, hazards, day/night cycles, environmental traits
+- **Social Systems**: Relationships, interactions, beliefs, history, cooperation metrics
+- **Resources**: Pellets with traits, evolution, and lifecycle tracking
 - **Spatial**: 2D positioning, movement, collision detection
-- **Tracking**: Injuries, events, achievements, interactions
+- **Tracking**: Injuries, events, achievements, interactions, trait analytics
+- **Building System**: Construction behavior, materials, blueprints, building types
+- **Advanced Traits**: Expanded combat traits, weather/terrain adaptation, procedural generation
 
 Each system is designed to create emergent, complex behaviors through the interaction of multiple subsystems.
